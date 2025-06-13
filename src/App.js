@@ -177,7 +177,6 @@ export default function App() {
         generateSchedule();
     }, []);
 
-    // UPDATED: handlePtoUpload function is now fully implemented
     const handlePtoUpload = (event) => {
         const file = event.target.files[0];
         if (!file) return;
@@ -250,7 +249,6 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
     
                   Object.keys(ptoData).forEach(name => {
                       if (updatedEmployees[name]) {
-                          // Filter out any invalid day strings before mapping
                           const validDays = ptoData[name].filter(day => DAYS.includes(day));
                           updatedEmployees[name].pto = validDays.map(day => ({ day }));
                           if (validDays.length > 0) {
@@ -283,6 +281,7 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         reader.readAsDataURL(file);
     };
 
+    // UPDATED: Now handles AI responses that are actions.
     const handleUserInput = async () => {
         if (!userInput.trim() || isThinking) return;
         if (!apiKey) {
@@ -295,19 +294,33 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         setIsThinking(true);
         setUserInput('');
         
-        const systemInstruction = `You are an expert scheduling assistant. 
-        Your task is to analyze a user's request based on ALL the provided data.
-        If the request is feasible, state how it can be done. 
-        If it creates a conflict (like a coverage gap), identify the conflict clearly and suggest 2-3 specific, actionable solutions.
-        
-        DATA CONTEXT:
-        1.  Employee Profiles (includes abilities, shifts, and PTO): 
-            ${JSON.stringify(employees, null, 2)}
-        
-        2.  The Current Full Schedule:
-            ${JSON.stringify(schedule, null, 2)}
+        const systemInstruction = `You are an expert scheduling assistant integrated into a React application. Your task is to analyze a user's request based on ALL the provided data.
 
-        IMPORTANT: Your memory is the chat history below. Refer to previous messages to understand the full context of the user's request, especially for follow-up commands like "yes, make that change".`;
+- If the user is asking a question or the request requires clarification, respond with a helpful text answer.
+- If the user confirms a change (e.g., "yes, make that change", "confirmed"), you MUST respond with a specific JSON object representing the action to take. Do NOT add any explanatory text outside of the JSON object.
+
+The JSON object must have two keys: "action" and "data".
+
+Possible actions are:
+1.  \`update_schedule\`: When the entire schedule grid needs to be changed. The \`data\` should be the complete new schedule object, matching the structure of the input schedule.
+2.  \`update_pto\`: When only an employee's PTO needs to be changed. The \`data\` should be an object like \`{"employeeName": "Brian Adie", "ptoDays": ["Tuesday"]}\`.
+
+Example of a valid JSON response for a confirmed change:
+{
+  "action": "update_pto",
+  "data": {
+    "employeeName": "Brian Adie",
+    "ptoDays": ["Tuesday"]
+  }
+}
+
+DATA CONTEXT:
+1.  Employee Profiles (includes abilities, shifts, and PTO): 
+    ${JSON.stringify(employees, null, 2)}
+2.  The Current Full Schedule:
+    ${JSON.stringify(schedule, null, 2)}
+
+IMPORTANT: Your memory is the chat history below. Refer to previous messages to understand the full context of the user's request.`;
 
         const apiHistory = newHistory.map(msg => ({
             role: msg.sender === 'assistant' ? 'model' : 'user',
@@ -318,7 +331,7 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
             const payload = {
                 contents: [
                     { role: 'user', parts: [{ text: systemInstruction }] },
-                    { role: 'model', parts: [{ text: "Understood. I have all the data and am ready to assist." }] },
+                    { role: 'model', parts: [{ text: "Understood. I will respond with a text explanation or a JSON action object." }] },
                     ...apiHistory
                 ],
             };
@@ -335,14 +348,42 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
             }
 
             const result = await response.json();
+            const textResponse = result.candidates[0].content.parts[0].text;
             
-            if (result.candidates && result.candidates.length > 0 &&
-                result.candidates[0].content && result.candidates[0].content.parts &&
-                result.candidates[0].content.parts.length > 0) {
-              const text = result.candidates[0].content.parts[0].text;
-              addMessage('assistant', text);
-            } else {
-               throw new Error("Invalid response structure from API.");
+            try {
+                // Check if the response is an "action" JSON
+                const cleanedText = textResponse.substring(textResponse.indexOf('{'), textResponse.lastIndexOf('}') + 1);
+                const responseObject = JSON.parse(cleanedText);
+
+                if (responseObject.action && responseObject.data) {
+                    switch (responseObject.action) {
+                        case 'update_pto': {
+                            const { employeeName, ptoDays } = responseObject.data;
+                            const updatedEmployees = { ...employees };
+                            if (updatedEmployees[employeeName]) {
+                                updatedEmployees[employeeName].pto = ptoDays.map(day => ({ day }));
+                                setEmployees(updatedEmployees);
+                                addMessage('assistant', 'I have updated the schedule as requested.');
+                            } else {
+                                addMessage('assistant', `Error: Could not find employee '${employeeName}' to update PTO.`);
+                            }
+                            break;
+                        }
+                        case 'update_schedule': {
+                             setSchedule(responseObject.data);
+                             addMessage('assistant', 'I have updated the schedule as requested.');
+                             break;
+                        }
+                        default:
+                            addMessage('assistant', `I received an action I don't understand: ${responseObject.action}`);
+                    }
+                } else {
+                    // It's a JSON object, but not an action, so just display it
+                    addMessage('assistant', textResponse);
+                }
+            } catch (e) {
+                // It's not a JSON object, just a regular text response
+                addMessage('assistant', textResponse);
             }
 
         } catch (error) {
