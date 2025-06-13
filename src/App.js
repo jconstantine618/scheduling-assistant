@@ -43,6 +43,9 @@ const TIME_SLOTS = Array.from({ length: (22 - 7) * 2 }, (_, i) => {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 });
 
+const getInitialMessage = () => ([{ sender: 'assistant', text: 'Hello! To enable the AI chat, please enter your API key.' }]);
+
+
 // --- Child Components ---
 
 const EmployeeForm = ({ employee, employeeName, onUpdate, onRemove }) => {
@@ -106,10 +109,10 @@ const EmployeeForm = ({ employee, employeeName, onUpdate, onRemove }) => {
 export default function App() {
     const [employees, setEmployees] = useState(INITIAL_EMPLOYEES);
     const [schedule, setSchedule] = useState(null);
-    const [chatHistory, setChatHistory] = useState([]);
+    const [chatHistory, setChatHistory] = useState(getInitialMessage());
     const [userInput, setUserInput] = useState('');
     const [activeView, setActiveView] = useState('chat');
-    const [apiKey, setApiKey] = useState(''); // NEW: State for API Key
+    const [apiKey, setApiKey] = useState('');
     const [isThinking, setIsThinking] = useState(false);
     const fileInputRef = React.useRef(null);
 
@@ -172,13 +175,12 @@ export default function App() {
     }, [employees]);
 
     useEffect(() => {
-        addMessage('assistant', 'Hello! To enable the AI chat, please enter your API key.');
         generateSchedule();
     }, []);
 
     const handlePtoUpload = () => { /* ... existing code ... */ };
 
-    // NEW: Updated chat handler to call AI
+    // UPDATED: Now sends entire chat history for context
     const handleUserInput = async () => {
         if (!userInput.trim() || isThinking) return;
         if (!apiKey) {
@@ -186,28 +188,33 @@ export default function App() {
             return;
         }
 
-        addMessage('user', userInput);
+        const newHistory = [...chatHistory, { sender: 'user', text: userInput }];
+        setChatHistory(newHistory);
         setIsThinking(true);
         setUserInput('');
-
-        const prompt = `You are an expert scheduling assistant. 
+        
+        const systemInstruction = `You are an expert scheduling assistant. 
         Your task is to analyze a user's request based on the provided schedule and employee data.
         If the request is feasible, state how it can be done. 
         If it creates a conflict (like a coverage gap), identify the conflict clearly and suggest 2-3 specific, actionable solutions.
-        
-        Here is the current employee data (JSON):
-        ${JSON.stringify(employees, null, 2)}
-        
-        Here is the user's request: "${userInput}"
-        
-        Provide a concise and helpful response.`;
+        The current employee data is: ${JSON.stringify(employees, null, 2)}
+        IMPORTANT: Your memory is the chat history. Refer to previous messages to understand the full context of the user's request, especially for follow-up commands like "yes, make that change".`;
+
+        const apiHistory = newHistory.map(msg => ({
+            role: msg.sender === 'assistant' ? 'model' : 'user',
+            parts: [{ text: msg.text }]
+        }));
 
         try {
             const payload = {
-                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                // Prepend system instruction and user request context
+                contents: [
+                    { role: 'user', parts: [{ text: systemInstruction }] },
+                    { role: 'model', parts: [{ text: "Understood. I am ready to assist." }] },
+                    ...apiHistory
+                ],
             };
             
-            // NOTE: This uses the Google AI endpoint. Replace with OpenAI if needed.
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -238,6 +245,10 @@ export default function App() {
         }
     };
 
+    // NEW: Function to reset the chat
+    const handleResetChat = () => {
+        setChatHistory(getInitialMessage());
+    };
 
     const handleUpdateEmployee = (name, updatedData) => {
         setEmployees(prev => ({...prev, [name]: updatedData}));
@@ -303,7 +314,6 @@ export default function App() {
 
                 {activeView === 'chat' && (
                     <div className="flex-grow flex flex-col">
-                        {/* NEW: API Key Input */}
                         <div className="p-4 border-b">
                             <label htmlFor="api-key" className="text-sm font-medium text-gray-700">Gemini API Key</label>
                             <input
@@ -315,7 +325,11 @@ export default function App() {
                                 placeholder="Enter your API key here"
                             />
                         </div>
-                        <div className="p-4 border-b"><button onClick={() => fileInputRef.current.click()} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Upload PTO Schedule</button><input type="file" ref={fileInputRef} className="hidden" /></div>
+                        <div className="p-4 border-b flex space-x-2">
+                           <button onClick={() => fileInputRef.current.click()} className="w-1/2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Upload PTO</button>
+                           <input type="file" ref={fileInputRef} className="hidden" />
+                           <button onClick={handleResetChat} className="w-1/2 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg">Reset Chat</button>
+                        </div>
                         <div className="flex-grow p-4 overflow-y-auto bg-gray-50">{chatHistory.map((msg, i) => <div key={i} className={`mb-4 flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-xs p-3 rounded-2xl ${msg.sender === 'user' ? 'bg-blue-500 text-white' : 'bg-white border'}`}><p className="text-sm" dangerouslySetInnerHTML={{ __html: msg.text.replace(/\n/g, '<br />') }}></p></div></div>)} {isThinking && <div className="mb-4 flex justify-start"><div className="max-w-xs p-3 rounded-2xl bg-white border"><p className="text-sm text-gray-500 animate-pulse">Assistant is thinking...</p></div></div>}</div>
                         <div className="p-4 border-t bg-white flex"><input type="text" value={userInput} onChange={e => setUserInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleUserInput()} className="flex-grow p-2 border rounded-l-lg" placeholder="Type request..." disabled={isThinking} /><button onClick={handleUserInput} className="bg-blue-600 text-white p-2 rounded-r-lg" disabled={isThinking}>Send</button></div>
                     </div>
