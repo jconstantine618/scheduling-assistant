@@ -108,14 +108,17 @@ export default function App() {
     const [schedule, setSchedule] = useState(null);
     const [chatHistory, setChatHistory] = useState([]);
     const [userInput, setUserInput] = useState('');
-    const [activeView, setActiveView] = useState('chat'); // 'chat' or 'employees'
+    const [activeView, setActiveView] = useState('chat');
+    const [apiKey, setApiKey] = useState(''); // NEW: State for API Key
+    const [isThinking, setIsThinking] = useState(false);
     const fileInputRef = React.useRef(null);
 
-    const addMessage = (sender, text, recommendations = []) => {
-        setChatHistory(prev => [...prev, { sender, text, recommendations }]);
+    const addMessage = (sender, text) => {
+        setChatHistory(prev => [...prev, { sender, text }]);
     };
     
     const generateSchedule = useCallback(() => {
+        // ... (schedule generation logic remains the same)
         const newSchedule = {};
         DAYS.forEach(day => {
             newSchedule[day] = {};
@@ -169,12 +172,72 @@ export default function App() {
     }, [employees]);
 
     useEffect(() => {
-        addMessage('assistant', 'Hello! Rules updated. You can now manage employees in the "Manage Employees" tab.');
+        addMessage('assistant', 'Hello! To enable the AI chat, please enter your API key.');
         generateSchedule();
     }, []);
 
     const handlePtoUpload = () => { /* ... existing code ... */ };
-    const handleUserInput = () => { /* ... existing code ... */ };
+
+    // NEW: Updated chat handler to call AI
+    const handleUserInput = async () => {
+        if (!userInput.trim() || isThinking) return;
+        if (!apiKey) {
+            addMessage('assistant', 'Please enter an API key to use the AI chat.');
+            return;
+        }
+
+        addMessage('user', userInput);
+        setIsThinking(true);
+        setUserInput('');
+
+        const prompt = `You are an expert scheduling assistant. 
+        Your task is to analyze a user's request based on the provided schedule and employee data.
+        If the request is feasible, state how it can be done. 
+        If it creates a conflict (like a coverage gap), identify the conflict clearly and suggest 2-3 specific, actionable solutions.
+        
+        Here is the current employee data (JSON):
+        ${JSON.stringify(employees, null, 2)}
+        
+        Here is the user's request: "${userInput}"
+        
+        Provide a concise and helpful response.`;
+
+        try {
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+            };
+            
+            // NOTE: This uses the Google AI endpoint. Replace with OpenAI if needed.
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                 const errorBody = await response.json();
+                 throw new Error(`API Error: ${response.status} ${response.statusText}. Details: ${JSON.stringify(errorBody)}`);
+            }
+
+            const result = await response.json();
+            
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+              const text = result.candidates[0].content.parts[0].text;
+              addMessage('assistant', text);
+            } else {
+               throw new Error("Invalid response structure from API.");
+            }
+
+        } catch (error) {
+            console.error(error);
+            addMessage('assistant', `Sorry, there was an error connecting to the AI. Please check your API key and the console for details. Error: ${error.message}`);
+        } finally {
+            setIsThinking(false);
+        }
+    };
+
 
     const handleUpdateEmployee = (name, updatedData) => {
         setEmployees(prev => ({...prev, [name]: updatedData}));
@@ -217,7 +280,7 @@ export default function App() {
                             <tr key={name} className="[&:nth-child(even)]:bg-gray-50">
                                 <td className="sticky left-0 bg-white [&:nth-child(even)]:bg-gray-50 z-10 p-2 border-r font-medium text-sm whitespace-nowrap">{name}</td>
                                 {schedule[day][name].map((task, i) => (
-                                    <td key={i} style={{backgroundColor: hexToRgba(COLORS[task], 0.8), color:['Badges/Projects','PTO'].includes(task)?'white':'black', border:`1px solid ${hexToRgba(COLORS[task],0.5)}`, borderLeft: task===schedule[day][name][i-1]?`1px solid ${hexToRgba(COLORS[task],0.5)}`:`1px solid ${hexToRgba(COLORS[task]||'#E5E7EB',0.5)}`, borderRight:task===schedule[day][name][i+1]?`1px solid ${hexToRgba(COLORS[task],0.5)}`:`1px solid ${hexToRgba(COLORS[task]||'#E5E7EB',0.5)}`}} className="text-center text-xs p-1 font-semibold">{task !== schedule[day][name][i-1] ? task.replace(/s$/, '') : ''}</td>
+                                    <td key={i} style={{backgroundColor: hexToRgba(COLORS[task], 0.8), color:['Badges/Projects','PTO'].includes(task)?'white':'black', border:`1px solid ${hexToRgba(COLORS[task],0.5)}`}} className="text-center text-xs p-1 font-semibold">{task !== schedule[day][name][i-1] ? task.replace(/s$/, '') : ''}</td>
                                 ))}
                             </tr>
                         ))}
@@ -240,9 +303,21 @@ export default function App() {
 
                 {activeView === 'chat' && (
                     <div className="flex-grow flex flex-col">
-                        <div className="p-4 border-b"><button onClick={() => fileInputRef.current.click()} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Upload PTO Schedule</button><input type="file" ref={fileInputRef} onChange={handlePtoUpload} className="hidden" /></div>
-                        <div className="flex-grow p-4 overflow-y-auto bg-gray-50">{chatHistory.map((msg, i) => <div key={i} className={`mb-4 flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-xs p-3 rounded-2xl ${msg.sender === 'user' ? 'bg-blue-500 text-white' : 'bg-white border'}`}><p className="text-sm">{msg.text}</p></div></div>)}</div>
-                        <div className="p-4 border-t bg-white flex"><input type="text" value={userInput} onChange={e => setUserInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleUserInput()} className="flex-grow p-2 border rounded-l-lg" placeholder="Type request..." /><button onClick={handleUserInput} className="bg-blue-600 text-white p-2 rounded-r-lg">Send</button></div>
+                        {/* NEW: API Key Input */}
+                        <div className="p-4 border-b">
+                            <label htmlFor="api-key" className="text-sm font-medium text-gray-700">Gemini API Key</label>
+                            <input
+                                id="api-key"
+                                type="password"
+                                value={apiKey}
+                                onChange={e => setApiKey(e.target.value)}
+                                className="w-full p-2 mt-1 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="Enter your API key here"
+                            />
+                        </div>
+                        <div className="p-4 border-b"><button onClick={() => fileInputRef.current.click()} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Upload PTO Schedule</button><input type="file" ref={fileInputRef} className="hidden" /></div>
+                        <div className="flex-grow p-4 overflow-y-auto bg-gray-50">{chatHistory.map((msg, i) => <div key={i} className={`mb-4 flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-xs p-3 rounded-2xl ${msg.sender === 'user' ? 'bg-blue-500 text-white' : 'bg-white border'}`}><p className="text-sm" dangerouslySetInnerHTML={{ __html: msg.text.replace(/\n/g, '<br />') }}></p></div></div>)} {isThinking && <div className="mb-4 flex justify-start"><div className="max-w-xs p-3 rounded-2xl bg-white border"><p className="text-sm text-gray-500 animate-pulse">Assistant is thinking...</p></div></div>}</div>
+                        <div className="p-4 border-t bg-white flex"><input type="text" value={userInput} onChange={e => setUserInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleUserInput()} className="flex-grow p-2 border rounded-l-lg" placeholder="Type request..." disabled={isThinking} /><button onClick={handleUserInput} className="bg-blue-600 text-white p-2 rounded-r-lg" disabled={isThinking}>Send</button></div>
                     </div>
                 )}
                 
@@ -266,3 +341,4 @@ export default function App() {
         </div>
     );
 }
+
