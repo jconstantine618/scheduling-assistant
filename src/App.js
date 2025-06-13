@@ -121,7 +121,6 @@ export default function App() {
     };
     
     const generateSchedule = useCallback(() => {
-        // ... (schedule generation logic remains the same)
         const newSchedule = {};
         DAYS.forEach(day => {
             newSchedule[day] = {};
@@ -180,7 +179,6 @@ export default function App() {
 
     const handlePtoUpload = () => { /* ... existing code ... */ };
 
-    // UPDATED: Now sends entire chat history for context
     const handleUserInput = async () => {
         if (!userInput.trim() || isThinking) return;
         if (!apiKey) {
@@ -193,12 +191,20 @@ export default function App() {
         setIsThinking(true);
         setUserInput('');
         
+        // UPDATED: Now sends the full schedule along with employee data.
         const systemInstruction = `You are an expert scheduling assistant. 
-        Your task is to analyze a user's request based on the provided schedule and employee data.
+        Your task is to analyze a user's request based on ALL the provided data.
         If the request is feasible, state how it can be done. 
         If it creates a conflict (like a coverage gap), identify the conflict clearly and suggest 2-3 specific, actionable solutions.
-        The current employee data is: ${JSON.stringify(employees, null, 2)}
-        IMPORTANT: Your memory is the chat history. Refer to previous messages to understand the full context of the user's request, especially for follow-up commands like "yes, make that change".`;
+        
+        DATA CONTEXT:
+        1.  Employee Profiles (includes abilities, shifts, and PTO): 
+            ${JSON.stringify(employees, null, 2)}
+        
+        2.  The Current Full Schedule:
+            ${JSON.stringify(schedule, null, 2)}
+
+        IMPORTANT: Your memory is the chat history below. Refer to previous messages to understand the full context of the user's request, especially for follow-up commands like "yes, make that change".`;
 
         const apiHistory = newHistory.map(msg => ({
             role: msg.sender === 'assistant' ? 'model' : 'user',
@@ -207,10 +213,9 @@ export default function App() {
 
         try {
             const payload = {
-                // Prepend system instruction and user request context
                 contents: [
                     { role: 'user', parts: [{ text: systemInstruction }] },
-                    { role: 'model', parts: [{ text: "Understood. I am ready to assist." }] },
+                    { role: 'model', parts: [{ text: "Understood. I have all the data and am ready to assist." }] },
                     ...apiHistory
                 ],
             };
@@ -245,7 +250,6 @@ export default function App() {
         }
     };
 
-    // NEW: Function to reset the chat
     const handleResetChat = () => {
         setChatHistory(getInitialMessage());
     };
