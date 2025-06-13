@@ -177,7 +177,111 @@ export default function App() {
         generateSchedule();
     }, []);
 
-    const handlePtoUpload = () => { /* ... existing code ... */ };
+    // UPDATED: handlePtoUpload function is now fully implemented
+    const handlePtoUpload = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        if (!apiKey) {
+            addMessage('assistant', 'Please enter an API key to process the PTO file.');
+            return;
+        }
+    
+        addMessage('assistant', 'Processing PTO file with AI. This may take a moment...');
+        setIsThinking(true);
+    
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+            const base64ImageData = reader.result.split(',')[1];
+    
+            const systemInstruction = `You are an expert at reading schedules from calendar images. Analyze the provided image. Extract the names of the people who have PTO (Paid Time Off) and the specific weekdays they have off. Return the data as a clean JSON object. The format should be a dictionary where keys are employee full names (e.g., "Brian Adie") and values are an array of strings representing the day of the week they have off (e.g., ["Monday", "Tuesday"]).
+
+Example Output for an image showing Brian Adie with PTO on Mon & Tue, and SydPo with PTO on Wed:
+{
+  "Brian Adie": ["Monday", "Tuesday"],
+  "SydPo": ["Wednesday"]
+}
+
+IMPORTANT: Only include employees with PTO. If an employee has a full week of PTO, list all five weekdays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]. Use the full names from the provided employee list for matching. Do not invent data.
+Employee List for name matching: ${Object.keys(employees).join(', ')}
+`;
+    
+            const payload = {
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: systemInstruction },
+                            {
+                                inlineData: {
+                                    mimeType: file.type,
+                                    data: base64ImageData
+                                }
+                            }
+                        ]
+                    }
+                ],
+            };
+    
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+    
+                if (!response.ok) {
+                     const errorBody = await response.json();
+                     throw new Error(`API Error: ${response.status} ${response.statusText}. Details: ${JSON.stringify(errorBody)}`);
+                }
+    
+                const result = await response.json();
+    
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                  
+                  let jsonText = result.candidates[0].content.parts[0].text;
+                  jsonText = jsonText.substring(jsonText.indexOf('{'), jsonText.lastIndexOf('}') + 1);
+    
+                  const ptoData = JSON.parse(jsonText);
+                  
+                  const updatedEmployees = { ...employees };
+                  let updatedNames = [];
+    
+                  Object.keys(ptoData).forEach(name => {
+                      if (updatedEmployees[name]) {
+                          // Filter out any invalid day strings before mapping
+                          const validDays = ptoData[name].filter(day => DAYS.includes(day));
+                          updatedEmployees[name].pto = validDays.map(day => ({ day }));
+                          if (validDays.length > 0) {
+                            updatedNames.push(name);
+                          }
+                      }
+                  });
+    
+                  setEmployees(updatedEmployees);
+                  if (updatedNames.length > 0) {
+                    addMessage('assistant', `Successfully processed PTO for: ${updatedNames.join(', ')}. The schedule has been updated.`);
+                  } else {
+                    addMessage('assistant', 'AI processed the file, but could not find any valid PTO entries matching the employee list.');
+                  }
+    
+                } else {
+                   throw new Error("Invalid response structure from API when processing PTO.");
+                }
+    
+            } catch (error) {
+                console.error(error);
+                addMessage('assistant', `Sorry, there was an error processing the PTO file. Please ensure it's a clear image and check the console for details. Error: ${error.message}`);
+            } finally {
+                setIsThinking(false);
+                if(fileInputRef.current) {
+                    fileInputRef.current.value = "";
+                }
+            }
+        };
+        reader.readAsDataURL(file);
+    };
 
     const handleUserInput = async () => {
         if (!userInput.trim() || isThinking) return;
@@ -191,7 +295,6 @@ export default function App() {
         setIsThinking(true);
         setUserInput('');
         
-        // UPDATED: Now sends the full schedule along with employee data.
         const systemInstruction = `You are an expert scheduling assistant. 
         Your task is to analyze a user's request based on ALL the provided data.
         If the request is feasible, state how it can be done. 
@@ -331,7 +434,7 @@ export default function App() {
                         </div>
                         <div className="p-4 border-b flex space-x-2">
                            <button onClick={() => fileInputRef.current.click()} className="w-1/2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Upload PTO</button>
-                           <input type="file" ref={fileInputRef} className="hidden" />
+                           <input type="file" ref={fileInputRef} onChange={handlePtoUpload} accept="image/*" className="hidden" />
                            <button onClick={handleResetChat} className="w-1/2 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg">Reset Chat</button>
                         </div>
                         <div className="flex-grow p-4 overflow-y-auto bg-gray-50">{chatHistory.map((msg, i) => <div key={i} className={`mb-4 flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-xs p-3 rounded-2xl ${msg.sender === 'user' ? 'bg-blue-500 text-white' : 'bg-white border'}`}><p className="text-sm" dangerouslySetInnerHTML={{ __html: msg.text.replace(/\n/g, '<br />') }}></p></div></div>)} {isThinking && <div className="mb-4 flex justify-start"><div className="max-w-xs p-3 rounded-2xl bg-white border"><p className="text-sm text-gray-500 animate-pulse">Assistant is thinking...</p></div></div>}</div>
