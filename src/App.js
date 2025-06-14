@@ -126,8 +126,6 @@ export default function App() {
         setChatHistory(prev => [...prev, { sender, text }]);
     };
     
-    // This is the single source of truth for creating the visual calendar.
-    // It runs whenever the `employees` data changes.
     const generateSchedule = useCallback(() => {
         const newSchedule = {};
         DAYS.forEach(day => {
@@ -135,12 +133,10 @@ export default function App() {
             Object.keys(employees).forEach(name => {
                 newSchedule[day][name] = Array(TIME_SLOTS.length).fill('OFF');
                 const emp = employees[name];
-                // Check for PTO first
                 if (emp.pto.some(p => p.day === day)) {
                     newSchedule[day][name].fill('PTO');
                     return;
                 }
-                // Then fill in shifts and lunches
                 TIME_SLOTS.forEach((time, i) => {
                    if (time >= emp.shift.start && time < emp.shift.end) {
                        newSchedule[day][name][i] = emp.specialistTask || 'Reservations';
@@ -150,7 +146,6 @@ export default function App() {
                    }
                 });
             });
-            // Finally, apply coverage rules
             TIME_SLOTS.forEach((time, i) => {
                 let resTarget = (time >= '08:00' && time < '17:00') ? 3 : (time >= '17:00' && time < '21:00') ? 1 : 0;
                 let dispTarget = (time >= '08:00' && time < '21:00') ? 1 : 0;
@@ -184,11 +179,9 @@ export default function App() {
         setSchedule(newSchedule);
     }, [employees]);
     
-    // This crucial effect ensures the calendar always reflects the latest employee data.
     useEffect(() => {
         generateSchedule();
     }, [employees, generateSchedule]);
-
 
     const handlePtoUpload = (event) => {
         const file = event.target.files[0];
@@ -270,34 +263,62 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         setChatHistory(newHistory);
         setIsThinking(true);
         setUserInput('');
-
-        const confirmationIntent = /yes|confirm|do it|make that change|proceed/i.test(userInput);
-
-        const systemInstruction = `You are a scheduling assistant. Your job is to understand a user's request and determine if it's a question or an action.
-- If the user is asking a question or needs clarification, respond with a text-based answer.
-- If the user's request requires a change to the schedule (e.g., granting PTO), propose the change and ask for confirmation.
-- If the user confirms an action, you MUST respond ONLY with a JSON object describing the action. Do NOT add any other text.
-The JSON object must have "action" and "data" keys. The only valid action is "update_pto".
-
-Example Response for a confirmed action:
-{ "action": "update_pto", "data": { "employeeName": "Elliott", "ptoDays": ["Monday"] } }
-
-Current Data:
-- Employees: ${JSON.stringify(employees, null, 2)}
-Chat History for Context:`;
         
         const apiHistory = newHistory.map(msg => ({
             role: msg.sender === 'assistant' ? 'model' : 'user',
             parts: [{ text: msg.text }]
         }));
 
-        const payload = {
+        // --- Step 1: Classify the user's intent ---
+        const intentSystemInstruction = `You are an intent classifier. Your only job is to classify the user's latest message based on the conversation history.
+Classify the intent as one of the following:
+- "CONFIRM_ACTION": If the user's message is a confirmation like "yes", "correct", "do it", "proceed", "confirm".
+- "ASK_QUESTION": If the user is asking a question about the schedule or rules.
+- "NEW_REQUEST": If the user is making a new request to change the schedule.
+
+Respond ONLY with the classification in all caps.`;
+        
+        let userIntent = 'ASK_QUESTION'; // Default intent
+        try {
+            const intentPayload = {
+                contents: [
+                    { role: 'user', parts: [{ text: intentSystemInstruction }] },
+                    { role: 'model', parts: [{ text: "Understood." }] },
+                    ...apiHistory
+                ],
+            };
+            const intentResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(intentPayload)
+            });
+            const intentResult = await intentResponse.json();
+            userIntent = intentResult.candidates[0].content.parts[0].text.trim();
+        } catch (error) {
+            console.error("Intent classification failed:", error);
+            addMessage('assistant', 'Sorry, I had trouble understanding your request.');
+            setIsThinking(false);
+            return;
+        }
+
+        // --- Step 2: Execute action or generate text based on intent ---
+        const actionSystemInstruction = `You are a scheduling assistant. Your job is to act based on the user's request.
+- If the intent is a question or a new request, respond with a helpful text answer.
+- If the user confirms an action, you MUST respond ONLY with a JSON object describing that action. Do NOT add any other text.
+The JSON object must have "action" and "data" keys. The only valid action is "update_pto".
+Example: { "action": "update_pto", "data": { "employeeName": "Elliott", "ptoDays": ["Monday"] } }
+
+Current Data:
+- Employees: ${JSON.stringify(employees, null, 2)}
+Chat History for Context:`;
+
+        const actionPayload = {
             contents: [
-                { role: 'user', parts: [{ text: systemInstruction }] },
+                { role: 'user', parts: [{ text: actionSystemInstruction }] },
                 { role: 'model', parts: [{ text: "Understood." }] },
                 ...apiHistory
             ],
-            ...(confirmationIntent && {
+            ...(userIntent === 'CONFIRM_ACTION' && {
                 generationConfig: {
                     responseMimeType: "application/json",
                 }
@@ -308,45 +329,37 @@ Chat History for Context:`;
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(actionPayload)
             });
-
-            if (!response.ok) {
-                 const errorBody = await response.json();
-                 throw new Error(`API Error: ${response.status} ${response.statusText}. Details: ${JSON.stringify(errorBody)}`);
-            }
+            if (!response.ok) throw new Error('API request failed');
 
             const result = await response.json();
             const textResponse = result.candidates[0].content.parts[0].text;
             
-            try {
+            if (userIntent === 'CONFIRM_ACTION') {
                 const responseObject = JSON.parse(textResponse);
                 if (responseObject.action === 'update_pto' && responseObject.data) {
                     const { employeeName, ptoDays } = responseObject.data;
-                    
-                    // This is the core of the fix: update the employee data, don't touch the schedule directly.
-                    setEmployees(prevEmployees => {
-                        const updatedEmployees = { ...prevEmployees };
-                        if (updatedEmployees[employeeName]) {
-                            const existingPtoDays = new Set(updatedEmployees[employeeName].pto.map(p => p.day));
-                            ptoDays.forEach(day => existingPtoDays.add(day));
-                            updatedEmployees[employeeName].pto = Array.from(existingPtoDays).map(day => ({ day }));
+                    setEmployees(prev => {
+                        const newEmployees = { ...prev };
+                        if (newEmployees[employeeName]) {
+                            const existingPto = new Set(newEmployees[employeeName].pto.map(p => p.day));
+                            ptoDays.forEach(day => existingPto.add(day));
+                            newEmployees[employeeName] = { ...newEmployees[employeeName], pto: Array.from(existingPto).map(day => ({ day })) };
                         }
-                        return updatedEmployees;
+                        return newEmployees;
                     });
-                    
                     addMessage('assistant', 'I have updated the schedule as requested.');
-
                 } else {
-                    addMessage('assistant', textResponse);
+                    addMessage('assistant', "I understood you wanted to make a change, but I couldn't determine the exact action. Please try again.");
                 }
-            } catch (e) {
+            } else {
                 addMessage('assistant', textResponse);
             }
 
         } catch (error) {
             console.error(error);
-            addMessage('assistant', `Sorry, there was an error connecting to the AI. Please check the console for details. Error: ${error.message}`);
+            addMessage('assistant', `Sorry, there was an error. Please check the console for details.`);
         } finally {
             setIsThinking(false);
         }
