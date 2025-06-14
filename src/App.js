@@ -43,7 +43,7 @@ const TIME_SLOTS = Array.from({ length: (22 - 7) * 2 }, (_, i) => {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 });
 
-const getInitialMessage = () => ([{ sender: 'assistant', text: 'Hello! To enable the AI chat, please enter your API key.' }]);
+const getInitialMessage = () => ([{ sender: 'assistant', text: 'Hello! Please enter your Gemini API key to begin. It will be stored securely in your browser.' }]);
 
 
 // --- Child Components ---
@@ -112,9 +112,15 @@ export default function App() {
     const [chatHistory, setChatHistory] = useState(getInitialMessage());
     const [userInput, setUserInput] = useState('');
     const [activeView, setActiveView] = useState('chat');
-    const [apiKey, setApiKey] = useState('');
+    const [apiKey, setApiKey] = useState(() => localStorage.getItem('geminiApiKey') || '');
     const [isThinking, setIsThinking] = useState(false);
     const fileInputRef = React.useRef(null);
+
+    useEffect(() => {
+        if (apiKey) {
+            localStorage.setItem('geminiApiKey', apiKey);
+        }
+    }, [apiKey]);
 
     const addMessage = (sender, text) => {
         setChatHistory(prev => [...prev, { sender, text }]);
@@ -175,6 +181,9 @@ export default function App() {
 
     useEffect(() => {
         generateSchedule();
+        if (apiKey) {
+            setChatHistory([{ sender: 'assistant', text: 'Welcome back! Your API key is loaded. Ready for your requests.' }]);
+        }
     }, []);
 
     const handlePtoUpload = (event) => {
@@ -349,10 +358,15 @@ IMPORTANT: Your memory is the chat history below. Refer to previous messages to 
             const result = await response.json();
             const textResponse = result.candidates[0].content.parts[0].text;
             
-            // UPDATED: More robust check for action JSON
-            if (textResponse.trim().startsWith('{')) {
+            // --- NEW, MORE ROBUST PARSING LOGIC ---
+            const jsonRegex = /```json\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*\})/
+            const match = textResponse.match(jsonRegex);
+
+            if (match) {
+                // We found a JSON block. The actual JSON is in either match[1] or match[2]
+                const jsonString = match[1] || match[2];
                 try {
-                    const responseObject = JSON.parse(textResponse);
+                    const responseObject = JSON.parse(jsonString);
                     if (responseObject.action && responseObject.data) {
                         switch (responseObject.action) {
                             case 'update_pto': {
@@ -373,17 +387,21 @@ IMPORTANT: Your memory is the chat history below. Refer to previous messages to 
                                  break;
                             }
                             default:
-                                addMessage('assistant', `I received an action I don't understand: ${responseObject.action}`);
+                                // It's JSON, but not a recognized action. Display the text.
+                                addMessage('assistant', textResponse);
                         }
-                        return; // Exit after processing the action
+                    } else {
+                        // The JSON doesn't have the "action" and "data" keys. Display the text.
+                         addMessage('assistant', textResponse);
                     }
                 } catch (e) {
-                    // Not a valid JSON or not an action object, treat as text
+                    // JSON.parse failed. It's likely just text that contains {}. Display it.
+                    addMessage('assistant', textResponse);
                 }
+            } else {
+                // No JSON block found, treat as a regular text response.
+                addMessage('assistant', textResponse);
             }
-            
-            // If it's not a valid action, treat as a text response
-            addMessage('assistant', textResponse);
 
 
         } catch (error) {
@@ -503,4 +521,3 @@ IMPORTANT: Your memory is the chat history below. Refer to previous messages to 
         </div>
     );
 }
-
