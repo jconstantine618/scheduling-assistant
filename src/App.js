@@ -290,10 +290,10 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         reader.readAsDataURL(file);
     };
 
+    // --- NEW AND REWRITTEN LOGIC ---
     const handleUserInput = async () => {
-        if (!userInput.trim() || isThinking) return;
-        if (!apiKey) {
-            addMessage('assistant', 'Please enter an API key to use the AI chat.');
+        if (!userInput.trim() || isThinking || !apiKey) {
+            if (!apiKey) addMessage('assistant', 'Please enter your API key to use the AI chat.');
             return;
         }
 
@@ -301,49 +301,41 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         setChatHistory(newHistory);
         setIsThinking(true);
         setUserInput('');
-        
-        const systemInstruction = `You are an expert scheduling assistant integrated into a React application. Your task is to analyze a user's request based on ALL the provided data.
 
-- If the user is asking a question or the request requires clarification, respond with a helpful text answer.
-- If the user confirms a change (e.g., "yes, make that change", "confirmed"), you MUST respond with a specific JSON object representing the action to take. Do NOT add any explanatory text outside of the JSON object.
+        // Determine if the user's intent is to confirm a change.
+        const confirmationIntent = /yes|confirm|do it|make that change|proceed/i.test(userInput);
 
-The JSON object must have two keys: "action" and "data".
-
-Possible actions are:
-1.  \`update_schedule\`: When the entire schedule grid needs to be changed. The \`data\` should be the complete new schedule object, matching the structure of the input schedule.
-2.  \`update_pto\`: When only an employee's PTO needs to be changed. The \`data\` should be an object like \`{"employeeName": "Brian Adie", "ptoDays": ["Tuesday"]}\`.
-
-Example of a valid JSON response for a confirmed change:
-{
-  "action": "update_pto",
-  "data": {
-    "employeeName": "Brian Adie",
-    "ptoDays": ["Tuesday"]
-  }
-}
+        // System prompt instructing the AI on its role and output formats.
+        const systemInstruction = `You are an expert scheduling assistant. Analyze the user's request based on the provided data.
+- If the user asks a question or the request needs clarification, respond with a helpful text answer.
+- If the user confirms a change (based on the latest chat message), you MUST respond ONLY with a JSON object describing the action. Do NOT include any other text.
+The JSON object must have "action" and "data" keys. Actions can be "update_schedule" or "update_pto".
 
 DATA CONTEXT:
-1.  Employee Profiles (includes abilities, shifts, and PTO): 
-    ${JSON.stringify(employees, null, 2)}
-2.  The Current Full Schedule:
-    ${JSON.stringify(schedule, null, 2)}
-
-IMPORTANT: Your memory is the chat history below. Refer to previous messages to understand the full context of the user's request.`;
-
+1. Employee Profiles: ${JSON.stringify(employees, null, 2)}
+2. Current Schedule: ${JSON.stringify(schedule, null, 2)}
+IMPORTANT: Your memory is the chat history below. Use it for context.`;
+        
         const apiHistory = newHistory.map(msg => ({
             role: msg.sender === 'assistant' ? 'model' : 'user',
             parts: [{ text: msg.text }]
         }));
 
+        const payload = {
+            contents: [
+                { role: 'user', parts: [{ text: systemInstruction }] },
+                { role: 'model', parts: [{ text: "Understood. I will provide a text answer or a JSON action object." }] },
+                ...apiHistory
+            ],
+            // Use JSON mode only when we expect an action
+            ...(confirmationIntent && {
+                generationConfig: {
+                    responseMimeType: "application/json",
+                }
+            })
+        };
+
         try {
-            const payload = {
-                contents: [
-                    { role: 'user', parts: [{ text: systemInstruction }] },
-                    { role: 'model', parts: [{ text: "Understood. I will respond with a text explanation or a JSON action object." }] },
-                    ...apiHistory
-                ],
-            };
-            
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -358,51 +350,39 @@ IMPORTANT: Your memory is the chat history below. Refer to previous messages to 
             const result = await response.json();
             const textResponse = result.candidates[0].content.parts[0].text;
             
-            // --- NEW, MORE ROBUST PARSING LOGIC ---
-            const jsonRegex = /```json\s*(\{[\s\S]*?\})\s*```|(\{[\s\S]*\})/
-            const match = textResponse.match(jsonRegex);
-
-            if (match) {
-                // We found a JSON block. The actual JSON is in either match[1] or match[2]
-                const jsonString = match[1] || match[2];
-                try {
-                    const responseObject = JSON.parse(jsonString);
-                    if (responseObject.action && responseObject.data) {
-                        switch (responseObject.action) {
-                            case 'update_pto': {
-                                const { employeeName, ptoDays } = responseObject.data;
-                                const updatedEmployees = { ...employees };
-                                if (updatedEmployees[employeeName]) {
-                                    updatedEmployees[employeeName].pto = ptoDays.map(day => ({ day }));
-                                    setEmployees(updatedEmployees);
-                                    addMessage('assistant', 'I have updated the schedule as requested.');
-                                } else {
-                                    addMessage('assistant', `Error: Could not find employee '${employeeName}' to update PTO.`);
-                                }
-                                break;
+            // Because we now use JSON mode for actions, we can directly try to parse it.
+            // If it's not a confirmation, it will be a string, and parsing will fail, which is expected.
+            try {
+                const responseObject = JSON.parse(textResponse);
+                if (responseObject.action && responseObject.data) {
+                    // It's a valid action, process it.
+                    switch (responseObject.action) {
+                        case 'update_pto':
+                            const { employeeName, ptoDays } = responseObject.data;
+                            const updatedEmployees = { ...employees };
+                            if (updatedEmployees[employeeName]) {
+                                updatedEmployees[employeeName].pto = ptoDays.map(day => ({ day }));
+                                setEmployees(updatedEmployees);
+                                addMessage('assistant', 'I have updated the schedule as requested.');
+                            } else {
+                                addMessage('assistant', `Error: Could not find employee '${employeeName}'.`);
                             }
-                            case 'update_schedule': {
-                                 setSchedule(responseObject.data);
-                                 addMessage('assistant', 'I have updated the schedule as requested.');
-                                 break;
-                            }
-                            default:
-                                // It's JSON, but not a recognized action. Display the text.
-                                addMessage('assistant', textResponse);
-                        }
-                    } else {
-                        // The JSON doesn't have the "action" and "data" keys. Display the text.
-                         addMessage('assistant', textResponse);
+                            break;
+                        case 'update_schedule':
+                             setSchedule(responseObject.data);
+                             addMessage('assistant', 'I have updated the schedule as requested.');
+                             break;
+                        default:
+                            addMessage('assistant', `I received an action I don't understand: ${responseObject.action}`);
                     }
-                } catch (e) {
-                    // JSON.parse failed. It's likely just text that contains {}. Display it.
+                } else {
+                    // It was valid JSON, but not an action. Display as text.
                     addMessage('assistant', textResponse);
                 }
-            } else {
-                // No JSON block found, treat as a regular text response.
+            } catch (e) {
+                // Parsing failed, so it's a plain text response.
                 addMessage('assistant', textResponse);
             }
-
 
         } catch (error) {
             console.error(error);
