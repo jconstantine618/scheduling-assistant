@@ -302,19 +302,17 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         setIsThinking(true);
         setUserInput('');
 
-        // Determine if the user's intent is to confirm a change.
         const confirmationIntent = /yes|confirm|do it|make that change|proceed/i.test(userInput);
 
-        // System prompt instructing the AI on its role and output formats.
-        const systemInstruction = `You are an expert scheduling assistant. Analyze the user's request based on the provided data.
-- If the user asks a question or the request needs clarification, respond with a helpful text answer.
-- If the user confirms a change (based on the latest chat message), you MUST respond ONLY with a JSON object describing the action. Do NOT include any other text.
-The JSON object must have "action" and "data" keys. Actions can be "update_schedule" or "update_pto".
+        const systemInstruction = `You are a scheduling assistant. Your job is to understand a user's request and determine if it's a question or an action.
+- If it's a question or you need to ask for clarification, respond with a text-based answer.
+- If the user confirms an action, you MUST respond ONLY with a JSON object describing the action. Do not add any other text.
+The JSON object must have "action" and "data" keys. Actions are "update_schedule" or "update_pto".
 
-DATA CONTEXT:
-1. Employee Profiles: ${JSON.stringify(employees, null, 2)}
-2. Current Schedule: ${JSON.stringify(schedule, null, 2)}
-IMPORTANT: Your memory is the chat history below. Use it for context.`;
+Current Data:
+- Employees: ${JSON.stringify(employees, null, 2)}
+- Schedule: ${JSON.stringify(schedule, null, 2)}
+Chat History for Context:`;
         
         const apiHistory = newHistory.map(msg => ({
             role: msg.sender === 'assistant' ? 'model' : 'user',
@@ -324,10 +322,9 @@ IMPORTANT: Your memory is the chat history below. Use it for context.`;
         const payload = {
             contents: [
                 { role: 'user', parts: [{ text: systemInstruction }] },
-                { role: 'model', parts: [{ text: "Understood. I will provide a text answer or a JSON action object." }] },
+                { role: 'model', parts: [{ text: "Understood." }] },
                 ...apiHistory
             ],
-            // Use JSON mode only when we expect an action
             ...(confirmationIntent && {
                 generationConfig: {
                     responseMimeType: "application/json",
@@ -350,12 +347,9 @@ IMPORTANT: Your memory is the chat history below. Use it for context.`;
             const result = await response.json();
             const textResponse = result.candidates[0].content.parts[0].text;
             
-            // Because we now use JSON mode for actions, we can directly try to parse it.
-            // If it's not a confirmation, it will be a string, and parsing will fail, which is expected.
             try {
                 const responseObject = JSON.parse(textResponse);
                 if (responseObject.action && responseObject.data) {
-                    // It's a valid action, process it.
                     switch (responseObject.action) {
                         case 'update_pto':
                             const { employeeName, ptoDays } = responseObject.data;
@@ -373,14 +367,12 @@ IMPORTANT: Your memory is the chat history below. Use it for context.`;
                              addMessage('assistant', 'I have updated the schedule as requested.');
                              break;
                         default:
-                            addMessage('assistant', `I received an action I don't understand: ${responseObject.action}`);
+                            addMessage('assistant', textResponse);
                     }
                 } else {
-                    // It was valid JSON, but not an action. Display as text.
                     addMessage('assistant', textResponse);
                 }
             } catch (e) {
-                // Parsing failed, so it's a plain text response.
                 addMessage('assistant', textResponse);
             }
 
@@ -501,3 +493,4 @@ IMPORTANT: Your memory is the chat history below. Use it for context.`;
         </div>
     );
 }
+
