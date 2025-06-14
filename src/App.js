@@ -281,7 +281,6 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         reader.readAsDataURL(file);
     };
 
-    // UPDATED: Now handles AI responses that are actions.
     const handleUserInput = async () => {
         if (!userInput.trim() || isThinking) return;
         if (!apiKey) {
@@ -350,41 +349,42 @@ IMPORTANT: Your memory is the chat history below. Refer to previous messages to 
             const result = await response.json();
             const textResponse = result.candidates[0].content.parts[0].text;
             
-            try {
-                // Check if the response is an "action" JSON
-                const cleanedText = textResponse.substring(textResponse.indexOf('{'), textResponse.lastIndexOf('}') + 1);
-                const responseObject = JSON.parse(cleanedText);
-
-                if (responseObject.action && responseObject.data) {
-                    switch (responseObject.action) {
-                        case 'update_pto': {
-                            const { employeeName, ptoDays } = responseObject.data;
-                            const updatedEmployees = { ...employees };
-                            if (updatedEmployees[employeeName]) {
-                                updatedEmployees[employeeName].pto = ptoDays.map(day => ({ day }));
-                                setEmployees(updatedEmployees);
-                                addMessage('assistant', 'I have updated the schedule as requested.');
-                            } else {
-                                addMessage('assistant', `Error: Could not find employee '${employeeName}' to update PTO.`);
+            // UPDATED: More robust check for action JSON
+            if (textResponse.trim().startsWith('{')) {
+                try {
+                    const responseObject = JSON.parse(textResponse);
+                    if (responseObject.action && responseObject.data) {
+                        switch (responseObject.action) {
+                            case 'update_pto': {
+                                const { employeeName, ptoDays } = responseObject.data;
+                                const updatedEmployees = { ...employees };
+                                if (updatedEmployees[employeeName]) {
+                                    updatedEmployees[employeeName].pto = ptoDays.map(day => ({ day }));
+                                    setEmployees(updatedEmployees);
+                                    addMessage('assistant', 'I have updated the schedule as requested.');
+                                } else {
+                                    addMessage('assistant', `Error: Could not find employee '${employeeName}' to update PTO.`);
+                                }
+                                break;
                             }
-                            break;
+                            case 'update_schedule': {
+                                 setSchedule(responseObject.data);
+                                 addMessage('assistant', 'I have updated the schedule as requested.');
+                                 break;
+                            }
+                            default:
+                                addMessage('assistant', `I received an action I don't understand: ${responseObject.action}`);
                         }
-                        case 'update_schedule': {
-                             setSchedule(responseObject.data);
-                             addMessage('assistant', 'I have updated the schedule as requested.');
-                             break;
-                        }
-                        default:
-                            addMessage('assistant', `I received an action I don't understand: ${responseObject.action}`);
+                        return; // Exit after processing the action
                     }
-                } else {
-                    // It's a JSON object, but not an action, so just display it
-                    addMessage('assistant', textResponse);
+                } catch (e) {
+                    // Not a valid JSON or not an action object, treat as text
                 }
-            } catch (e) {
-                // It's not a JSON object, just a regular text response
-                addMessage('assistant', textResponse);
             }
+            
+            // If it's not a valid action, treat as a text response
+            addMessage('assistant', textResponse);
+
 
         } catch (error) {
             console.error(error);
