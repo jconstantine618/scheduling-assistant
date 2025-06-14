@@ -126,6 +126,8 @@ export default function App() {
         setChatHistory(prev => [...prev, { sender, text }]);
     };
     
+    // This is the single source of truth for creating the visual calendar.
+    // It runs whenever the `employees` data changes.
     const generateSchedule = useCallback(() => {
         const newSchedule = {};
         DAYS.forEach(day => {
@@ -133,10 +135,12 @@ export default function App() {
             Object.keys(employees).forEach(name => {
                 newSchedule[day][name] = Array(TIME_SLOTS.length).fill('OFF');
                 const emp = employees[name];
+                // Check for PTO first
                 if (emp.pto.some(p => p.day === day)) {
                     newSchedule[day][name].fill('PTO');
                     return;
                 }
+                // Then fill in shifts and lunches
                 TIME_SLOTS.forEach((time, i) => {
                    if (time >= emp.shift.start && time < emp.shift.end) {
                        newSchedule[day][name][i] = emp.specialistTask || 'Reservations';
@@ -146,6 +150,7 @@ export default function App() {
                    }
                 });
             });
+            // Finally, apply coverage rules
             TIME_SLOTS.forEach((time, i) => {
                 let resTarget = (time >= '08:00' && time < '17:00') ? 3 : (time >= '17:00' && time < '21:00') ? 1 : 0;
                 let dispTarget = (time >= '08:00' && time < '21:00') ? 1 : 0;
@@ -178,15 +183,8 @@ export default function App() {
         });
         setSchedule(newSchedule);
     }, [employees]);
-
-    useEffect(() => {
-        generateSchedule();
-        if (apiKey) {
-            setChatHistory([{ sender: 'assistant', text: 'Welcome back! Your API key is loaded. Ready for your requests.' }]);
-        }
-    }, []);
     
-    // This effect runs whenever the employees state changes, ensuring the schedule is always up to date.
+    // This crucial effect ensures the calendar always reflects the latest employee data.
     useEffect(() => {
         generateSchedule();
     }, [employees, generateSchedule]);
@@ -208,32 +206,11 @@ export default function App() {
             const base64ImageData = reader.result.split(',')[1];
     
             const systemInstruction = `You are an expert at reading schedules from calendar images. Analyze the provided image. Extract the names of the people who have PTO (Paid Time Off) and the specific weekdays they have off. Return the data as a clean JSON object. The format should be a dictionary where keys are employee full names (e.g., "Brian Adie") and values are an array of strings representing the day of the week they have off (e.g., ["Monday", "Tuesday"]).
-
-Example Output for an image showing Brian Adie with PTO on Mon & Tue, and SydPo with PTO on Wed:
-{
-  "Brian Adie": ["Monday", "Tuesday"],
-  "SydPo": ["Wednesday"]
-}
-
-IMPORTANT: Only include employees with PTO. If an employee has a full week of PTO, list all five weekdays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]. Use the full names from the provided employee list for matching. Do not invent data.
 Employee List for name matching: ${Object.keys(employees).join(', ')}
 `;
     
             const payload = {
-                contents: [
-                    {
-                        role: "user",
-                        parts: [
-                            { text: systemInstruction },
-                            {
-                                inlineData: {
-                                    mimeType: file.type,
-                                    data: base64ImageData
-                                }
-                            }
-                        ]
-                    }
-                ],
+                contents: [ { role: "user", parts: [ { text: systemInstruction }, { inlineData: { mimeType: file.type, data: base64ImageData } } ] } ],
             };
     
             try {
@@ -249,48 +226,34 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
                 }
     
                 const result = await response.json();
-    
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
-                  
-                  let jsonText = result.candidates[0].content.parts[0].text;
-                  jsonText = jsonText.substring(jsonText.indexOf('{'), jsonText.lastIndexOf('}') + 1);
-    
-                  const ptoData = JSON.parse(jsonText);
-                  
-                  const updatedEmployees = { ...employees };
-                  let updatedNames = [];
-    
-                  Object.keys(ptoData).forEach(name => {
-                      if (updatedEmployees[name]) {
-                          const validDays = ptoData[name].filter(day => DAYS.includes(day));
-                          updatedEmployees[name].pto = validDays.map(day => ({ day }));
-                          if (validDays.length > 0) {
-                            updatedNames.push(name);
-                          }
-                      }
-                  });
-    
-                  setEmployees(updatedEmployees);
-                  if (updatedNames.length > 0) {
-                    addMessage('assistant', `Successfully processed PTO for: ${updatedNames.join(', ')}. The schedule has been updated.`);
-                  } else {
-                    addMessage('assistant', 'AI processed the file, but could not find any valid PTO entries matching the employee list.');
-                  }
-    
+                const jsonText = result.candidates[0].content.parts[0].text.substring(result.candidates[0].content.parts[0].text.indexOf('{'), result.candidates[0].content.parts[0].text.lastIndexOf('}') + 1);
+                const ptoData = JSON.parse(jsonText);
+                
+                let updatedNames = [];
+                setEmployees(prevEmployees => {
+                    const updatedEmployees = { ...prevEmployees };
+                    Object.keys(ptoData).forEach(name => {
+                        if (updatedEmployees[name]) {
+                            const validDays = ptoData[name].filter(day => DAYS.includes(day));
+                            updatedEmployees[name].pto = validDays.map(day => ({ day }));
+                            if (validDays.length > 0) updatedNames.push(name);
+                        }
+                    });
+                    return updatedEmployees;
+                });
+
+                if (updatedNames.length > 0) {
+                  addMessage('assistant', `Successfully processed PTO for: ${updatedNames.join(', ')}. The schedule has been updated.`);
                 } else {
-                   throw new Error("Invalid response structure from API when processing PTO.");
+                  addMessage('assistant', 'AI processed the file, but could not find any valid PTO entries matching the employee list.');
                 }
     
             } catch (error) {
                 console.error(error);
-                addMessage('assistant', `Sorry, there was an error processing the PTO file. Please ensure it's a clear image and check the console for details. Error: ${error.message}`);
+                addMessage('assistant', `Sorry, there was an error processing the PTO file. Error: ${error.message}`);
             } finally {
                 setIsThinking(false);
-                if(fileInputRef.current) {
-                    fileInputRef.current.value = "";
-                }
+                if(fileInputRef.current) fileInputRef.current.value = "";
             }
         };
         reader.readAsDataURL(file);
@@ -311,11 +274,13 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         const confirmationIntent = /yes|confirm|do it|make that change|proceed/i.test(userInput);
 
         const systemInstruction = `You are a scheduling assistant. Your job is to understand a user's request and determine if it's a question or an action.
-- If it's a question or you need to ask for clarification, respond with a text-based answer.
+- If the user is asking a question or needs clarification, respond with a text-based answer.
+- If the user's request requires a change to the schedule (e.g., granting PTO), propose the change and ask for confirmation.
 - If the user confirms an action, you MUST respond ONLY with a JSON object describing the action. Do NOT add any other text.
 The JSON object must have "action" and "data" keys. The only valid action is "update_pto".
 
-Example Response: { "action": "update_pto", "data": { "employeeName": "Elliott", "ptoDays": ["Monday"] } }
+Example Response for a confirmed action:
+{ "action": "update_pto", "data": { "employeeName": "Elliott", "ptoDays": ["Monday"] } }
 
 Current Data:
 - Employees: ${JSON.stringify(employees, null, 2)}
@@ -358,18 +323,20 @@ Chat History for Context:`;
                 const responseObject = JSON.parse(textResponse);
                 if (responseObject.action === 'update_pto' && responseObject.data) {
                     const { employeeName, ptoDays } = responseObject.data;
-                    const updatedEmployees = { ...employees };
-                    if (updatedEmployees[employeeName]) {
-                        // Merging new PTO days with existing ones
-                        const existingPtoDays = new Set(updatedEmployees[employeeName].pto.map(p => p.day));
-                        ptoDays.forEach(day => existingPtoDays.add(day));
-                        updatedEmployees[employeeName].pto = Array.from(existingPtoDays).map(day => ({ day }));
+                    
+                    // This is the core of the fix: update the employee data, don't touch the schedule directly.
+                    setEmployees(prevEmployees => {
+                        const updatedEmployees = { ...prevEmployees };
+                        if (updatedEmployees[employeeName]) {
+                            const existingPtoDays = new Set(updatedEmployees[employeeName].pto.map(p => p.day));
+                            ptoDays.forEach(day => existingPtoDays.add(day));
+                            updatedEmployees[employeeName].pto = Array.from(existingPtoDays).map(day => ({ day }));
+                        }
+                        return updatedEmployees;
+                    });
+                    
+                    addMessage('assistant', 'I have updated the schedule as requested.');
 
-                        setEmployees(updatedEmployees); // This will trigger the calendar to regenerate
-                        addMessage('assistant', 'I have updated the schedule as requested.');
-                    } else {
-                        addMessage('assistant', `Error: Could not find employee '${employeeName}'.`);
-                    }
                 } else {
                     addMessage('assistant', textResponse);
                 }
@@ -379,7 +346,7 @@ Chat History for Context:`;
 
         } catch (error) {
             console.error(error);
-            addMessage('assistant', `Sorry, there was an error connecting to the AI. Please check your API key and the console for details. Error: ${error.message}`);
+            addMessage('assistant', `Sorry, there was an error connecting to the AI. Please check the console for details. Error: ${error.message}`);
         } finally {
             setIsThinking(false);
         }
