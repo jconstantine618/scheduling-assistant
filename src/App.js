@@ -185,6 +185,12 @@ export default function App() {
             setChatHistory([{ sender: 'assistant', text: 'Welcome back! Your API key is loaded. Ready for your requests.' }]);
         }
     }, []);
+    
+    // This effect runs whenever the employees state changes, ensuring the schedule is always up to date.
+    useEffect(() => {
+        generateSchedule();
+    }, [employees, generateSchedule]);
+
 
     const handlePtoUpload = (event) => {
         const file = event.target.files[0];
@@ -306,12 +312,13 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
 
         const systemInstruction = `You are a scheduling assistant. Your job is to understand a user's request and determine if it's a question or an action.
 - If it's a question or you need to ask for clarification, respond with a text-based answer.
-- If the user confirms an action, you MUST respond ONLY with a JSON object describing the action. Do not add any other text.
-The JSON object must have "action" and "data" keys. Actions are "update_schedule" or "update_pto".
+- If the user confirms an action, you MUST respond ONLY with a JSON object describing the action. Do NOT add any other text.
+The JSON object must have "action" and "data" keys. The only valid action is "update_pto".
+
+Example Response: { "action": "update_pto", "data": { "employeeName": "Elliott", "ptoDays": ["Monday"] } }
 
 Current Data:
 - Employees: ${JSON.stringify(employees, null, 2)}
-- Schedule: ${JSON.stringify(schedule, null, 2)}
 Chat History for Context:`;
         
         const apiHistory = newHistory.map(msg => ({
@@ -349,25 +356,19 @@ Chat History for Context:`;
             
             try {
                 const responseObject = JSON.parse(textResponse);
-                if (responseObject.action && responseObject.data) {
-                    switch (responseObject.action) {
-                        case 'update_pto':
-                            const { employeeName, ptoDays } = responseObject.data;
-                            const updatedEmployees = { ...employees };
-                            if (updatedEmployees[employeeName]) {
-                                updatedEmployees[employeeName].pto = ptoDays.map(day => ({ day }));
-                                setEmployees(updatedEmployees);
-                                addMessage('assistant', 'I have updated the schedule as requested.');
-                            } else {
-                                addMessage('assistant', `Error: Could not find employee '${employeeName}'.`);
-                            }
-                            break;
-                        case 'update_schedule':
-                             setSchedule(responseObject.data);
-                             addMessage('assistant', 'I have updated the schedule as requested.');
-                             break;
-                        default:
-                            addMessage('assistant', textResponse);
+                if (responseObject.action === 'update_pto' && responseObject.data) {
+                    const { employeeName, ptoDays } = responseObject.data;
+                    const updatedEmployees = { ...employees };
+                    if (updatedEmployees[employeeName]) {
+                        // Merging new PTO days with existing ones
+                        const existingPtoDays = new Set(updatedEmployees[employeeName].pto.map(p => p.day));
+                        ptoDays.forEach(day => existingPtoDays.add(day));
+                        updatedEmployees[employeeName].pto = Array.from(existingPtoDays).map(day => ({ day }));
+
+                        setEmployees(updatedEmployees); // This will trigger the calendar to regenerate
+                        addMessage('assistant', 'I have updated the schedule as requested.');
+                    } else {
+                        addMessage('assistant', `Error: Could not find employee '${employeeName}'.`);
                     }
                 } else {
                     addMessage('assistant', textResponse);
@@ -414,8 +415,6 @@ Chat History for Context:`;
         addMessage('assistant', `Added ${newName}. Please update their details.`);
     };
     
-    useEffect(() => { generateSchedule(); }, [employees, generateSchedule]);
-
     const renderScheduleGrid = (day) => {
         if (!schedule || !schedule[day]) return <div className="p-4 text-center">Generating...</div>;
         return (
@@ -493,4 +492,3 @@ Chat History for Context:`;
         </div>
     );
 }
-
