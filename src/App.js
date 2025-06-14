@@ -126,6 +126,8 @@ export default function App() {
         setChatHistory(prev => [...prev, { sender, text }]);
     };
     
+    // This is the single source of truth for creating the visual calendar.
+    // It runs whenever the `employees` data changes.
     const generateSchedule = useCallback(() => {
         const newSchedule = {};
         DAYS.forEach(day => {
@@ -133,10 +135,12 @@ export default function App() {
             Object.keys(employees).forEach(name => {
                 newSchedule[day][name] = Array(TIME_SLOTS.length).fill('OFF');
                 const emp = employees[name];
+                // Check for PTO first
                 if (emp.pto.some(p => p.day === day)) {
                     newSchedule[day][name].fill('PTO');
                     return;
                 }
+                // Then fill in shifts and lunches
                 TIME_SLOTS.forEach((time, i) => {
                    if (time >= emp.shift.start && time < emp.shift.end) {
                        newSchedule[day][name][i] = emp.specialistTask || 'Reservations';
@@ -146,6 +150,7 @@ export default function App() {
                    }
                 });
             });
+            // Finally, apply coverage rules
             TIME_SLOTS.forEach((time, i) => {
                 let resTarget = (time >= '08:00' && time < '17:00') ? 3 : (time >= '17:00' && time < '21:00') ? 1 : 0;
                 let dispTarget = (time >= '08:00' && time < '21:00') ? 1 : 0;
@@ -179,9 +184,11 @@ export default function App() {
         setSchedule(newSchedule);
     }, [employees]);
     
+    // This crucial effect ensures the calendar always reflects the latest employee data.
     useEffect(() => {
         generateSchedule();
     }, [employees, generateSchedule]);
+
 
     const handlePtoUpload = (event) => {
         const file = event.target.files[0];
@@ -272,7 +279,7 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
         // --- Step 1: Classify the user's intent ---
         const intentSystemInstruction = `You are an intent classifier. Your only job is to classify the user's latest message based on the conversation history.
 Classify the intent as one of the following:
-- "CONFIRM_ACTION": If the user's message is a confirmation like "yes", "correct", "do it", "proceed", "confirm".
+- "CONFIRM_ACTION": If the user's message is a confirmation like "yes", "correct", "do it", "proceed", "confirm", "ok", "yep".
 - "ASK_QUESTION": If the user is asking a question about the schedule or rules.
 - "NEW_REQUEST": If the user is making a new request to change the schedule.
 
@@ -305,8 +312,11 @@ Respond ONLY with the classification in all caps.`;
         const actionSystemInstruction = `You are a scheduling assistant. Your job is to act based on the user's request.
 - If the intent is a question or a new request, respond with a helpful text answer.
 - If the user confirms an action, you MUST respond ONLY with a JSON object describing that action. Do NOT add any other text.
-The JSON object must have "action" and "data" keys. The only valid action is "update_pto".
-Example: { "action": "update_pto", "data": { "employeeName": "Elliott", "ptoDays": ["Monday"] } }
+
+The JSON object must have an "action" key. Valid actions are:
+1. "update_employee_data": Modifies a single employee's data. The "data" key should contain "employeeName" and "updates". The "updates" object can contain "specialistTask" or "ptoDays" (as an array of strings).
+   Example: { "action": "update_employee_data", "data": { "employeeName": "Elliott", "updates": { "ptoDays": ["Monday"] } } }
+   Example: { "action": "update_employee_data", "data": { "employeeName": "SydPo", "updates": { "specialistTask": "Journey Desk" } } }
 
 Current Data:
 - Employees: ${JSON.stringify(employees, null, 2)}
@@ -315,7 +325,7 @@ Chat History for Context:`;
         const actionPayload = {
             contents: [
                 { role: 'user', parts: [{ text: actionSystemInstruction }] },
-                { role: 'model', parts: [{ text: "Understood." }] },
+                { role: 'model', parts: [{ text: "Understood. I will provide a text answer or a JSON action object." }] },
                 ...apiHistory
             ],
             ...(userIntent === 'CONFIRM_ACTION' && {
@@ -338,14 +348,19 @@ Chat History for Context:`;
             
             if (userIntent === 'CONFIRM_ACTION') {
                 const responseObject = JSON.parse(textResponse);
-                if (responseObject.action === 'update_pto' && responseObject.data) {
-                    const { employeeName, ptoDays } = responseObject.data;
+                if (responseObject.action === 'update_employee_data' && responseObject.data) {
+                    const { employeeName, updates } = responseObject.data;
                     setEmployees(prev => {
                         const newEmployees = { ...prev };
                         if (newEmployees[employeeName]) {
-                            const existingPto = new Set(newEmployees[employeeName].pto.map(p => p.day));
-                            ptoDays.forEach(day => existingPto.add(day));
-                            newEmployees[employeeName] = { ...newEmployees[employeeName], pto: Array.from(existingPto).map(day => ({ day })) };
+                            if(updates.ptoDays) {
+                                const existingPto = new Set(newEmployees[employeeName].pto.map(p => p.day));
+                                updates.ptoDays.forEach(day => existingPto.add(day));
+                                newEmployees[employeeName] = { ...newEmployees[employeeName], pto: Array.from(existingPto).map(day => ({ day })) };
+                            }
+                            if(updates.specialistTask) {
+                                 newEmployees[employeeName] = { ...newEmployees[employeeName], specialistTask: updates.specialistTask };
+                            }
                         }
                         return newEmployees;
                     });
