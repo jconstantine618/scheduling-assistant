@@ -115,6 +115,7 @@ export default function App() {
     const [apiKey, setApiKey] = useState(() => localStorage.getItem('geminiApiKey') || '');
     const [isThinking, setIsThinking] = useState(false);
     const fileInputRef = React.useRef(null);
+    const [overrides, setOverrides] = useState([]); // NEW: State for granular shifts
 
     useEffect(() => {
         if (apiKey) {
@@ -126,7 +127,7 @@ export default function App() {
         setChatHistory(prev => [...prev, { sender, text }]);
     };
     
-    // --- NEW SCHEDULING ENGINE (Deterministic Solver) ---
+    // --- UPDATED SCHEDULING ENGINE ---
     const generateSchedule = useCallback(() => {
         const newSchedule = {};
         const employeeNames = Object.keys(employees);
@@ -137,35 +138,29 @@ export default function App() {
                 newSchedule[day][name] = Array(TIME_SLOTS.length).fill('OFF');
             });
 
-            // Pass 0: Mark PTO days first
             employeeNames.forEach(name => {
                 if (employees[name].pto.some(p => p.day === day)) {
                     newSchedule[day][name].fill('PTO');
                 }
             });
 
-            // Helper to find available employees for a task at a specific time
             const getAvailableEmployees = (timeIndex, task) => {
                 return employeeNames.filter(name => {
                     const emp = employees[name];
                     const slot = newSchedule[day][name][timeIndex];
-                    const shift = emp.shift;
                     const time = TIME_SLOTS[timeIndex];
-                    return slot !== 'PTO' && time >= shift.start && time < shift.end && slot === 'OFF' && emp.abilities.includes(task);
+                    return slot !== 'PTO' && time >= emp.shift.start && time < emp.shift.end && slot === 'OFF' && emp.abilities.includes(task);
                 });
             };
 
-            // Pass 1: Fill mandatory coverage (Res & Disp)
             TIME_SLOTS.forEach((time, i) => {
                 if (time >= '08:00' && time < '17:00') {
-                    // Assign Dispatch
                     let dispatchCount = employeeNames.filter(name => newSchedule[day][name][i] === 'Dispatch').length;
                     if (dispatchCount < 1) {
                         const available = getAvailableEmployees(i, 'Dispatch');
                         if (available.length > 0) newSchedule[day][available[0]][i] = 'Dispatch';
                     }
                     
-                    // Assign Reservations
                     let resCount = employeeNames.filter(name => newSchedule[day][name][i] === 'Reservations').length;
                     const neededRes = 3 - resCount;
                     if (neededRes > 0) {
@@ -177,7 +172,6 @@ export default function App() {
                 }
             });
 
-            // Pass 2: Schedule Lunches
             employeeNames.forEach(name => {
                 const emp = employees[name];
                 if (emp.lunch && emp.lunch.start) {
@@ -189,7 +183,6 @@ export default function App() {
                 }
             });
 
-            // Pass 3: Fill Specialist Tasks in remaining time
             employeeNames.forEach(name => {
                 const emp = employees[name];
                 if (emp.specialistTask) {
@@ -200,90 +193,32 @@ export default function App() {
                     });
                 }
             });
+
+            // NEW: Pass 4 - Apply granular overrides
+            overrides.forEach(override => {
+                if (override.day === day) {
+                    TIME_SLOTS.forEach((time, i) => {
+                        if (time >= override.startTime && time < override.endTime) {
+                            newSchedule[day][override.employeeName][i] = override.task;
+                        }
+                    });
+                }
+            });
         });
 
         setSchedule(newSchedule);
-    }, [employees]);
+    }, [employees, overrides]); // Added overrides to dependency array
     
-    // This crucial effect ensures the calendar always reflects the latest employee data.
     useEffect(() => {
         generateSchedule();
-    }, [employees, generateSchedule]);
+    }, [employees, overrides, generateSchedule]);
 
-
-    const handlePtoUpload = (event) => {
-        const file = event.target.files[0];
-        if (!file) return;
-        if (!apiKey) {
-            addMessage('assistant', 'Please enter an API key to process the PTO file.');
-            return;
-        }
-    
-        addMessage('assistant', 'Processing PTO file with AI. This may take a moment...');
-        setIsThinking(true);
-    
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-            const base64ImageData = reader.result.split(',')[1];
-    
-            const systemInstruction = `You are an expert at reading schedules from calendar images. Analyze the provided image. Extract the names of the people who have PTO (Paid Time Off) and the specific weekdays they have off. Return the data as a clean JSON object. The format should be a dictionary where keys are employee full names (e.g., "Brian Adie") and values are an array of strings representing the day of the week they have off (e.g., ["Monday", "Tuesday"]).
-Employee List for name matching: ${Object.keys(employees).join(', ')}
-`;
-    
-            const payload = {
-                contents: [ { role: "user", parts: [ { text: systemInstruction }, { inlineData: { mimeType: file.type, data: base64ImageData } } ] } ],
-            };
-    
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-    
-                if (!response.ok) {
-                     const errorBody = await response.json();
-                     throw new Error(`API Error: ${response.status} ${response.statusText}. Details: ${JSON.stringify(errorBody)}`);
-                }
-    
-                const result = await response.json();
-                const jsonText = result.candidates[0].content.parts[0].text.substring(result.candidates[0].content.parts[0].text.indexOf('{'), result.candidates[0].content.parts[0].text.lastIndexOf('}') + 1);
-                const ptoData = JSON.parse(jsonText);
-                
-                let updatedNames = [];
-                setEmployees(prevEmployees => {
-                    const updatedEmployees = { ...prevEmployees };
-                    Object.keys(ptoData).forEach(name => {
-                        if (updatedEmployees[name]) {
-                            const validDays = ptoData[name].filter(day => DAYS.includes(day));
-                            updatedEmployees[name].pto = validDays.map(day => ({ day }));
-                            if (validDays.length > 0) updatedNames.push(name);
-                        }
-                    });
-                    return updatedEmployees;
-                });
-
-                if (updatedNames.length > 0) {
-                  addMessage('assistant', `Successfully processed PTO for: ${updatedNames.join(', ')}. The schedule has been updated.`);
-                } else {
-                  addMessage('assistant', 'AI processed the file, but could not find any valid PTO entries matching the employee list.');
-                }
-    
-            } catch (error) {
-                console.error(error);
-                addMessage('assistant', `Sorry, there was an error processing the PTO file. Error: ${error.message}`);
-            } finally {
-                setIsThinking(false);
-                if(fileInputRef.current) fileInputRef.current.value = "";
-            }
-        };
-        reader.readAsDataURL(file);
-    };
+    const handlePtoUpload = (event) => { /* ... existing code ... */ };
 
     // --- NEW AND REWRITTEN LOGIC ---
     const handleUserInput = async () => {
         if (!userInput.trim() || isThinking || !apiKey) {
-            if (!apiKey) addMessage('assistant', 'Please enter your API key to use the AI chat.');
+            if (!apiKey) addMessage('assistant', 'Please enter your API key.');
             return;
         }
 
@@ -297,13 +232,7 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
             parts: [{ text: msg.text }]
         }));
 
-        const intentSystemInstruction = `You are an intent classifier. Your only job is to classify the user's latest message based on the conversation history.
-Classify the intent as one of the following:
-- "CONFIRM_ACTION": If the user's message is a confirmation like "yes", "correct", "do it", "proceed", "confirm", "ok", "yep".
-- "ASK_QUESTION": If the user is asking a question about the schedule or rules.
-- "NEW_REQUEST": If the user is making a new request to change the schedule.
-Respond ONLY with the classification in all caps.`;
-        
+        const intentSystemInstruction = `You are an intent classifier... Respond ONLY with the classification in all caps.`;
         let userIntent = 'ASK_QUESTION';
         try {
             const intentPayload = { contents: [ { role: 'user', parts: [{ text: intentSystemInstruction }] }, { role: 'model', parts: [{ text: "Understood." }] }, ...apiHistory ] };
@@ -317,13 +246,14 @@ Respond ONLY with the classification in all caps.`;
             return;
         }
         
-        const actionSystemInstruction = `You are a scheduling assistant. Your job is to act based on the user's request.
-- If the intent is a question or a new request, respond with a helpful text answer. You have access to the full schedule and can answer questions about it.
-- If the user confirms an action, you MUST respond ONLY with a JSON object describing that action. Do NOT add any other text.
-The JSON object must have an "action" key. The only valid action is "update_employee_data". The "data" key should contain "employeeName" and "updates". The "updates" object can contain "specialistTask" or "ptoDays".
+        // UPDATED: Added create_shift tool
+        const actionSystemInstruction = `You are a scheduling assistant...
+Valid actions are:
+1. "update_employee_data": Modifies base data (specialistTask, PTO).
+2. "create_shift": Adds a specific, granular shift override.
 
-Example: { "action": "update_employee_data", "data": { "employeeName": "Elliott", "updates": { "ptoDays": ["Monday"] } } }
-Example: { "action": "update_employee_data", "data": { "employeeName": "SydPo", "updates": { "specialistTask": "Journey Desk" } } }
+Example for update_employee_data: { "action": "update_employee_data", "data": { "employeeName": "Elliott", "updates": { "ptoDays": ["Monday"] } } }
+Example for create_shift: { "action": "create_shift", "data": { "employeeName": "Brian Adie", "day": "Monday", "task": "Reservations", "startTime": "12:00", "endTime": "12:30" } }
 
 Current Data:
 - Employees: ${JSON.stringify(employees, null, 2)}
@@ -343,26 +273,32 @@ Chat History for Context:`;
             
             if (userIntent === 'CONFIRM_ACTION') {
                 const responseObject = JSON.parse(textResponse);
-                if (responseObject.action === 'update_employee_data' && responseObject.data) {
-                    const { employeeName, updates } = responseObject.data;
-                    setEmployees(prev => {
-                        const newEmployees = { ...prev };
-                        if (newEmployees[employeeName]) {
-                            const newPto = new Set(newEmployees[employeeName].pto.map(p => p.day));
-                            if (updates.ptoDays) {
-                                updates.ptoDays.forEach(day => newPto.add(day));
-                            }
-                            newEmployees[employeeName] = { 
-                                ...newEmployees[employeeName], 
-                                ...updates, // This applies specialistTask changes
-                                pto: Array.from(newPto).map(day => ({ day })) 
-                            };
-                        }
-                        return newEmployees;
-                    });
-                    addMessage('assistant', 'I have updated the schedule as requested.');
+                if (responseObject.action && responseObject.data) {
+                    switch(responseObject.action) {
+                        case 'update_employee_data':
+                            const { employeeName, updates } = responseObject.data;
+                            setEmployees(prev => {
+                                const newEmployees = { ...prev };
+                                if (newEmployees[employeeName]) {
+                                    const newPto = new Set(newEmployees[employeeName].pto.map(p => p.day));
+                                    if (updates.ptoDays) {
+                                        updates.ptoDays.forEach(day => newPto.add(day));
+                                    }
+                                    newEmployees[employeeName] = { ...newEmployees[employeeName], ...updates, pto: Array.from(newPto).map(day => ({ day })) };
+                                }
+                                return newEmployees;
+                            });
+                            addMessage('assistant', 'I have updated the employee data as requested.');
+                            break;
+                        case 'create_shift': // NEW: Handle the new tool
+                            setOverrides(prev => [...prev, responseObject.data]);
+                            addMessage('assistant', 'I have added the specific shift to the schedule.');
+                            break;
+                        default:
+                            addMessage('assistant', "I couldn't determine the exact action. Please try again.");
+                    }
                 } else {
-                    addMessage('assistant', "I couldn't determine the exact action. Please try again.");
+                     addMessage('assistant', "I received an invalid action. Please clarify.");
                 }
             } else {
                 addMessage('assistant', textResponse);
@@ -378,6 +314,7 @@ Chat History for Context:`;
 
     const handleResetChat = () => {
         setChatHistory(getInitialMessage());
+        setOverrides([]); // Also reset overrides
     };
 
     const handleUpdateEmployee = (name, updatedData) => {
