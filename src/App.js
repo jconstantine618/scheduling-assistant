@@ -327,6 +327,7 @@ Example: { "action": "update_employee_data", "data": { "employeeName": "SydPo", 
 
 Current Data:
 - Employees: ${JSON.stringify(employees, null, 2)}
+- Current Schedule: ${JSON.stringify(schedule, null, 2)}
 Chat History for Context:`;
 
         const actionPayload = {
@@ -482,3 +483,4 @@ Chat History for Context:`;
         </div>
     );
 }
+
