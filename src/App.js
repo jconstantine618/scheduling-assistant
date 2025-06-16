@@ -204,7 +204,7 @@ export default function App() {
 
         setSchedule(newSchedule);
     }, [employees]);
-
+    
     // This crucial effect ensures the calendar always reflects the latest employee data.
     useEffect(() => {
         generateSchedule();
@@ -318,7 +318,7 @@ Respond ONLY with the classification in all caps.`;
         }
         
         const actionSystemInstruction = `You are a scheduling assistant. Your job is to act based on the user's request.
-- If the intent is a question or a new request, respond with a helpful text answer.
+- If the intent is a question or a new request, respond with a helpful text answer. You have access to the full schedule and can answer questions about it.
 - If the user confirms an action, you MUST respond ONLY with a JSON object describing that action. Do NOT add any other text.
 The JSON object must have an "action" key. The only valid action is "update_employee_data". The "data" key should contain "employeeName" and "updates". The "updates" object can contain "specialistTask" or "ptoDays".
 
@@ -483,4 +483,3 @@ Chat History for Context:`;
         </div>
     );
 }
-
