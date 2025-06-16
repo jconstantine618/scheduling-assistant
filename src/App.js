@@ -126,64 +126,85 @@ export default function App() {
         setChatHistory(prev => [...prev, { sender, text }]);
     };
     
-    // This is the single source of truth for creating the visual calendar.
-    // It runs whenever the `employees` data changes.
+    // --- NEW SCHEDULING ENGINE (Deterministic Solver) ---
     const generateSchedule = useCallback(() => {
         const newSchedule = {};
+        const employeeNames = Object.keys(employees);
+
         DAYS.forEach(day => {
             newSchedule[day] = {};
-            Object.keys(employees).forEach(name => {
+            employeeNames.forEach(name => {
                 newSchedule[day][name] = Array(TIME_SLOTS.length).fill('OFF');
-                const emp = employees[name];
-                // Check for PTO first
-                if (emp.pto.some(p => p.day === day)) {
-                    newSchedule[day][name].fill('PTO');
-                    return;
-                }
-                // Then fill in shifts and lunches
-                TIME_SLOTS.forEach((time, i) => {
-                   if (time >= emp.shift.start && time < emp.shift.end) {
-                       newSchedule[day][name][i] = emp.specialistTask || 'Reservations';
-                   }
-                   if (emp.lunch && emp.lunch.start && time >= emp.lunch.start && time < emp.lunch.end) {
-                       newSchedule[day][name][i] = 'Lunch';
-                   }
-                });
             });
-            // Finally, apply coverage rules
-            TIME_SLOTS.forEach((time, i) => {
-                let resTarget = (time >= '08:00' && time < '17:00') ? 3 : (time >= '17:00' && time < '21:00') ? 1 : 0;
-                let dispTarget = (time >= '08:00' && time < '21:00') ? 1 : 0;
-                if (!resTarget && !dispTarget) return;
 
-                let assigned = Object.keys(employees).filter(name => newSchedule[day][name][i] !== 'OFF' && newSchedule[day][name][i] !== 'Lunch' && newSchedule[day][name][i] !== 'PTO');
-                let resCount = assigned.filter(name => newSchedule[day][name][i] === 'Reservations').length;
-                let dispCount = assigned.filter(name => newSchedule[day][name][i] === 'Dispatch').length;
+            // Pass 0: Mark PTO days first
+            employeeNames.forEach(name => {
+                if (employees[name].pto.some(p => p.day === day)) {
+                    newSchedule[day][name].fill('PTO');
+                }
+            });
 
-                assigned.forEach(name => {
+            // Helper to find available employees for a task at a specific time
+            const getAvailableEmployees = (timeIndex, task) => {
+                return employeeNames.filter(name => {
                     const emp = employees[name];
-                    const isSpecialist = emp.specialistTask && emp.specialistTask.length > 0;
-                    if (isSpecialist) return;
-
-                    if (emp.abilities.includes('Dispatch') && dispCount < dispTarget) {
-                        if (newSchedule[day][name][i] !== 'Dispatch') {
-                            if (newSchedule[day][name][i] === 'Reservations') resCount--;
-                            newSchedule[day][name][i] = 'Dispatch';
-                            dispCount++;
-                        }
-                    } else if (emp.abilities.includes('Reservations') && resCount < resTarget) {
-                        if (newSchedule[day][name][i] !== 'Reservations') {
-                           if (newSchedule[day][name][i] === 'Dispatch') dispCount--;
-                            newSchedule[day][name][i] = 'Reservations';
-                            resCount++;
-                        }
-                    }
+                    const slot = newSchedule[day][name][timeIndex];
+                    const shift = emp.shift;
+                    const time = TIME_SLOTS[timeIndex];
+                    return slot !== 'PTO' && time >= shift.start && time < shift.end && slot === 'OFF' && emp.abilities.includes(task);
                 });
+            };
+
+            // Pass 1: Fill mandatory coverage (Res & Disp)
+            TIME_SLOTS.forEach((time, i) => {
+                if (time >= '08:00' && time < '17:00') {
+                    // Assign Dispatch
+                    let dispatchCount = employeeNames.filter(name => newSchedule[day][name][i] === 'Dispatch').length;
+                    if (dispatchCount < 1) {
+                        const available = getAvailableEmployees(i, 'Dispatch');
+                        if (available.length > 0) newSchedule[day][available[0]][i] = 'Dispatch';
+                    }
+                    
+                    // Assign Reservations
+                    let resCount = employeeNames.filter(name => newSchedule[day][name][i] === 'Reservations').length;
+                    const neededRes = 3 - resCount;
+                    if (neededRes > 0) {
+                        const available = getAvailableEmployees(i, 'Reservations');
+                        available.slice(0, neededRes).forEach(name => {
+                             newSchedule[day][name][i] = 'Reservations';
+                        });
+                    }
+                }
+            });
+
+            // Pass 2: Schedule Lunches
+            employeeNames.forEach(name => {
+                const emp = employees[name];
+                if (emp.lunch && emp.lunch.start) {
+                     TIME_SLOTS.forEach((time, i) => {
+                        if(time >= emp.lunch.start && time < emp.lunch.end && newSchedule[day][name][i] !== 'PTO') {
+                            newSchedule[day][name][i] = 'Lunch';
+                        }
+                     });
+                }
+            });
+
+            // Pass 3: Fill Specialist Tasks in remaining time
+            employeeNames.forEach(name => {
+                const emp = employees[name];
+                if (emp.specialistTask) {
+                    TIME_SLOTS.forEach((time, i) => {
+                         if (time >= emp.shift.start && time < emp.shift.end && newSchedule[day][name][i] === 'OFF') {
+                            newSchedule[day][name][i] = emp.specialistTask;
+                         }
+                    });
+                }
             });
         });
+
         setSchedule(newSchedule);
     }, [employees]);
-    
+
     // This crucial effect ensures the calendar always reflects the latest employee data.
     useEffect(() => {
         generateSchedule();
@@ -276,29 +297,17 @@ Employee List for name matching: ${Object.keys(employees).join(', ')}
             parts: [{ text: msg.text }]
         }));
 
-        // --- Step 1: Classify the user's intent ---
         const intentSystemInstruction = `You are an intent classifier. Your only job is to classify the user's latest message based on the conversation history.
 Classify the intent as one of the following:
 - "CONFIRM_ACTION": If the user's message is a confirmation like "yes", "correct", "do it", "proceed", "confirm", "ok", "yep".
 - "ASK_QUESTION": If the user is asking a question about the schedule or rules.
 - "NEW_REQUEST": If the user is making a new request to change the schedule.
-
 Respond ONLY with the classification in all caps.`;
         
-        let userIntent = 'ASK_QUESTION'; // Default intent
+        let userIntent = 'ASK_QUESTION';
         try {
-            const intentPayload = {
-                contents: [
-                    { role: 'user', parts: [{ text: intentSystemInstruction }] },
-                    { role: 'model', parts: [{ text: "Understood." }] },
-                    ...apiHistory
-                ],
-            };
-            const intentResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(intentPayload)
-            });
+            const intentPayload = { contents: [ { role: 'user', parts: [{ text: intentSystemInstruction }] }, { role: 'model', parts: [{ text: "Understood." }] }, ...apiHistory ] };
+            const intentResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(intentPayload) });
             const intentResult = await intentResponse.json();
             userIntent = intentResult.candidates[0].content.parts[0].text.trim();
         } catch (error) {
@@ -307,42 +316,27 @@ Respond ONLY with the classification in all caps.`;
             setIsThinking(false);
             return;
         }
-
-        // --- Step 2: Execute action or generate text based on intent ---
+        
         const actionSystemInstruction = `You are a scheduling assistant. Your job is to act based on the user's request.
 - If the intent is a question or a new request, respond with a helpful text answer.
 - If the user confirms an action, you MUST respond ONLY with a JSON object describing that action. Do NOT add any other text.
+The JSON object must have an "action" key. The only valid action is "update_employee_data". The "data" key should contain "employeeName" and "updates". The "updates" object can contain "specialistTask" or "ptoDays".
 
-The JSON object must have an "action" key. Valid actions are:
-1. "update_employee_data": Modifies a single employee's data. The "data" key should contain "employeeName" and "updates". The "updates" object can contain "specialistTask" or "ptoDays" (as an array of strings).
-   Example: { "action": "update_employee_data", "data": { "employeeName": "Elliott", "updates": { "ptoDays": ["Monday"] } } }
-   Example: { "action": "update_employee_data", "data": { "employeeName": "SydPo", "updates": { "specialistTask": "Journey Desk" } } }
+Example: { "action": "update_employee_data", "data": { "employeeName": "Elliott", "updates": { "ptoDays": ["Monday"] } } }
+Example: { "action": "update_employee_data", "data": { "employeeName": "SydPo", "updates": { "specialistTask": "Journey Desk" } } }
 
 Current Data:
 - Employees: ${JSON.stringify(employees, null, 2)}
 Chat History for Context:`;
 
         const actionPayload = {
-            contents: [
-                { role: 'user', parts: [{ text: actionSystemInstruction }] },
-                { role: 'model', parts: [{ text: "Understood. I will provide a text answer or a JSON action object." }] },
-                ...apiHistory
-            ],
-            ...(userIntent === 'CONFIRM_ACTION' && {
-                generationConfig: {
-                    responseMimeType: "application/json",
-                }
-            })
+            contents: [ { role: 'user', parts: [{ text: actionSystemInstruction }] }, { role: 'model', parts: [{ text: "Understood." }] }, ...apiHistory ],
+            ...(userIntent === 'CONFIRM_ACTION' && { generationConfig: { responseMimeType: "application/json" } })
         };
 
         try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(actionPayload)
-            });
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(actionPayload) });
             if (!response.ok) throw new Error('API request failed');
-
             const result = await response.json();
             const textResponse = result.candidates[0].content.parts[0].text;
             
@@ -353,20 +347,21 @@ Chat History for Context:`;
                     setEmployees(prev => {
                         const newEmployees = { ...prev };
                         if (newEmployees[employeeName]) {
-                            if(updates.ptoDays) {
-                                const existingPto = new Set(newEmployees[employeeName].pto.map(p => p.day));
-                                updates.ptoDays.forEach(day => existingPto.add(day));
-                                newEmployees[employeeName] = { ...newEmployees[employeeName], pto: Array.from(existingPto).map(day => ({ day })) };
+                            const newPto = new Set(newEmployees[employeeName].pto.map(p => p.day));
+                            if (updates.ptoDays) {
+                                updates.ptoDays.forEach(day => newPto.add(day));
                             }
-                            if(updates.specialistTask) {
-                                 newEmployees[employeeName] = { ...newEmployees[employeeName], specialistTask: updates.specialistTask };
-                            }
+                            newEmployees[employeeName] = { 
+                                ...newEmployees[employeeName], 
+                                ...updates, // This applies specialistTask changes
+                                pto: Array.from(newPto).map(day => ({ day })) 
+                            };
                         }
                         return newEmployees;
                     });
                     addMessage('assistant', 'I have updated the schedule as requested.');
                 } else {
-                    addMessage('assistant', "I understood you wanted to make a change, but I couldn't determine the exact action. Please try again.");
+                    addMessage('assistant', "I couldn't determine the exact action. Please try again.");
                 }
             } else {
                 addMessage('assistant', textResponse);
@@ -374,7 +369,7 @@ Chat History for Context:`;
 
         } catch (error) {
             console.error(error);
-            addMessage('assistant', `Sorry, there was an error. Please check the console for details.`);
+            addMessage('assistant', `Sorry, there was an error. Please check the console.`);
         } finally {
             setIsThinking(false);
         }
