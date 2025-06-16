@@ -127,7 +127,7 @@ export default function App() {
         setChatHistory(prev => [...prev, { sender, text }]);
     };
     
-    // --- UPDATED SCHEDULING ENGINE ---
+    // --- NEW SCHEDULING ENGINE (Deterministic Solver) ---
     const generateSchedule = useCallback(() => {
         const newSchedule = {};
         const employeeNames = Object.keys(employees);
@@ -138,12 +138,14 @@ export default function App() {
                 newSchedule[day][name] = Array(TIME_SLOTS.length).fill('OFF');
             });
 
+            // Pass 0: Mark PTO days first
             employeeNames.forEach(name => {
                 if (employees[name].pto.some(p => p.day === day)) {
                     newSchedule[day][name].fill('PTO');
                 }
             });
 
+            // Helper to find available employees for a task at a specific time
             const getAvailableEmployees = (timeIndex, task) => {
                 return employeeNames.filter(name => {
                     const emp = employees[name];
@@ -153,14 +155,17 @@ export default function App() {
                 });
             };
 
+            // Pass 1: Fill mandatory coverage (Res & Disp)
             TIME_SLOTS.forEach((time, i) => {
                 if (time >= '08:00' && time < '17:00') {
+                    // Assign Dispatch
                     let dispatchCount = employeeNames.filter(name => newSchedule[day][name][i] === 'Dispatch').length;
                     if (dispatchCount < 1) {
                         const available = getAvailableEmployees(i, 'Dispatch');
                         if (available.length > 0) newSchedule[day][available[0]][i] = 'Dispatch';
                     }
                     
+                    // Assign Reservations
                     let resCount = employeeNames.filter(name => newSchedule[day][name][i] === 'Reservations').length;
                     const neededRes = 3 - resCount;
                     if (neededRes > 0) {
@@ -172,6 +177,7 @@ export default function App() {
                 }
             });
 
+            // Pass 2: Schedule Lunches
             employeeNames.forEach(name => {
                 const emp = employees[name];
                 if (emp.lunch && emp.lunch.start) {
@@ -183,6 +189,7 @@ export default function App() {
                 }
             });
 
+            // Pass 3: Fill Specialist Tasks in remaining time
             employeeNames.forEach(name => {
                 const emp = employees[name];
                 if (emp.specialistTask) {
@@ -209,6 +216,7 @@ export default function App() {
         setSchedule(newSchedule);
     }, [employees, overrides]); // Added overrides to dependency array
     
+    // This crucial effect ensures the calendar always reflects the latest employee data.
     useEffect(() => {
         generateSchedule();
     }, [employees, overrides, generateSchedule]);
