@@ -255,4 +255,3 @@ function demote(grid, day, idx, task, countObj) {
   const victim = Object.keys(grid[day]).find(n => grid[day][n][idx] === task);
   if (!victim) return;
   grid[day][victim][idx]
-
