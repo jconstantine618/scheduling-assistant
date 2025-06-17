@@ -1,6 +1,6 @@
 // src/SchedulerApp.js
 // High‑level scheduling component that owns state + exposes methods
-// ---------------------------------------------------------------
+//---------------------------------------------------------------
 import React, {
   useState,
   useEffect,
@@ -38,10 +38,10 @@ const EVE_TARGET = { res: 2, disp: 1 };
 /* —————————————————————— MAIN COMPONENT —————————————————————— */
 const SchedulerApp = forwardRef(function SchedulerApp({ initialEmployees }, ref) {
   const [employees, setEmployees] = useState(initialEmployees);
-  const [overrides, setOverrides] = useState([]); // granular changes ("create_shift")
+  const [overrides, setOverrides] = useState([]);
   const [schedule, setSchedule] = useState(() => createBlankSchedule(initialEmployees));
 
-  /* ——— methods exposed to parent (chat UI) ——— */
+  // Expose methods to parent (chat layer)
   useImperativeHandle(ref, () => ({
     updateEmployeePTO(name, ptoDays) {
       setEmployees(prev => {
@@ -61,11 +61,11 @@ const SchedulerApp = forwardRef(function SchedulerApp({ initialEmployees }, ref)
     },
   }));
 
-  /* ——— schedule builder ——— */
+  /* ——— build schedule ——— */
   const buildSchedule = useCallback(() => {
     const grid = createBlankSchedule(employees);
 
-    // PTO + lunch
+    // 0) PTO + Lunch blocks
     DAYS.forEach(day => {
       Object.entries(employees).forEach(([name, emp]) => {
         if (emp.pto.some(p => p.day === day)) {
@@ -76,7 +76,7 @@ const SchedulerApp = forwardRef(function SchedulerApp({ initialEmployees }, ref)
       });
     });
 
-    // mandatory coverage per slot
+    // 1) Mandatory coverage targets
     DAYS.forEach(day => {
       TIME_SLOTS.forEach((time, idx) => {
         const tgt = time < '17:00' ? DAY_TARGET : EVE_TARGET;
@@ -84,7 +84,7 @@ const SchedulerApp = forwardRef(function SchedulerApp({ initialEmployees }, ref)
       });
     });
 
-    // specialist tasks
+    // 2) Specialist tasks
     DAYS.forEach(day => {
       Object.entries(employees).forEach(([name, emp]) => {
         if (!emp.specialistTask) return;
@@ -95,7 +95,7 @@ const SchedulerApp = forwardRef(function SchedulerApp({ initialEmployees }, ref)
       });
     });
 
-    // overrides (highest priority)
+    // 3) Manual overrides (highest priority)
     overrides.forEach(o => blockRange(grid, o.day, o.employeeName, o.startTime, o.endTime, o.task));
 
     setSchedule(grid);
@@ -103,7 +103,6 @@ const SchedulerApp = forwardRef(function SchedulerApp({ initialEmployees }, ref)
 
   useEffect(buildSchedule, [buildSchedule]);
 
-  /* ——— render simple table ——— */
   if (!schedule) return null;
   return (
     <div className="overflow-x-auto p-2">
@@ -122,9 +121,7 @@ const SchedulerApp = forwardRef(function SchedulerApp({ initialEmployees }, ref)
             <tbody>
               {Object.keys(employees).sort().map(name => (
                 <tr key={name} className="odd:bg-gray-50">
-                  <td className="sticky left-0 bg-white odd:bg-gray-50 p-1 border font-medium">
-                    {name}
-                  </td>
+                  <td className="sticky left-0 bg-white odd:bg-gray-50 p-1 border font-medium">{name}</td>
                   {schedule[day][name].map((task, i) => (
                     <td
                       key={i}
@@ -191,6 +188,4 @@ function demote(grid, day, idx, task, c) {
 }
 function promote(grid, day, idx, name, task, c) {
   grid[day][name][idx] = task;
-  task === 'Reservations' ? c.res++ : c.disp++;
-}
-function inShift(emp
+  task === 'Reservations' ? c
