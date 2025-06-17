@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
 
 // ———————————————————————————————————
 //  HELPER CONSTANTS & UTILITIES
@@ -32,16 +38,56 @@ const DAY_TARGET = { res: 3, disp: 1 };
 const EVE_TARGET = { res: 2, disp: 1, resGoal: 3 };
 
 // ———————————————————————————————————
-//  CORE STATE SHAPES
+//  MAIN SCHEDULER COMPONENT
+//  ⚠️ wrapped with forwardRef so the parent (chat UI) can
+//  imperatively invoke actions like PTO or shift overrides
 // ———————————————————————————————————
-export default function SchedulerApp({ initialEmployees }) {
+const SchedulerApp = forwardRef(function SchedulerApp({ initialEmployees }, ref) {
   const [employees, setEmployees] = useState(initialEmployees);
-  const [schedule, setSchedule] = useState(createBlankSchedule(initialEmployees));
+  const [schedule, setSchedule] = useState(() => createBlankSchedule(initialEmployees));
   const [overrides, setOverrides] = useState([]); // granular shift overrides
-  const [errors, setErrors] = useState([]); // validation errors fed to chat layer
+  const [errors, setErrors] = useState([]);
+
+  // Expose mutation helpers to the parent via ref --------------------------------
+  useImperativeHandle(ref, () => ({
+    /**
+     * PTO utility used by chat layer when it parses
+     * { action:"update_employee_data", ... }
+     */
+    updateEmployeePTO(employeeName, ptoDays /* string[] */) {
+      setEmployees(prev => {
+        const cloned = { ...prev };
+        if (!cloned[employeeName]) return prev;
+        const merged = new Set(cloned[employeeName].pto.map(p => p.day));
+        ptoDays.forEach(d => merged.add(d));
+        cloned[employeeName] = {
+          ...cloned[employeeName],
+          pto: Array.from(merged).map(day => ({ day })),
+        };
+        return cloned;
+      });
+    },
+
+    /**
+     * Shift override ("create_shift") utility.
+     */
+    addShiftOverride({ employeeName, day, task, startTime, endTime }) {
+      setOverrides(prev => [
+        ...prev,
+        { employeeName, day, task, startTime, endTime },
+      ]);
+    },
+
+    /**
+     * Convenience reset used by chat "Reset Chat" button.
+     */
+    clearOverrides() {
+      setOverrides([]);
+    },
+  }));
 
   // ————————————————————————————————
-  //  MAIN SCHEDULER
+  //  BUILD SCHEDULE (pure algorithm)
   // ————————————————————————————————
   const buildSchedule = useCallback(() => {
     const grid = createBlankSchedule(employees);
@@ -53,16 +99,15 @@ export default function SchedulerApp({ initialEmployees }) {
           grid[day][name].fill('PTO');
           return;
         }
-        // lunch blocks (immutable)
         blockRange(grid, day, name, emp.lunch.start, emp.lunch.end, 'Lunch');
       });
     });
 
-    // Pass‑1 → Mandatory coverage (08‑17)
+    // Pass‑1 → Mandatory coverage (08‑17 / 17‑21)
     DAYS.forEach(day => {
       TIME_SLOTS.forEach((time, idx) => {
-        const target = time < '17:00' ? DAY_TARGET : EVE_TARGET;
-        balanceSlot(grid, day, idx, target, employees);
+        const tgt = time < '17:00' ? DAY_TARGET : EVE_TARGET;
+        balanceSlot(grid, day, idx, tgt, employees);
       });
     });
 
@@ -77,7 +122,7 @@ export default function SchedulerApp({ initialEmployees }) {
       });
     });
 
-    // Pass‑3 → Apply overrides (highest priority)
+    // Pass‑3 → Manual overrides (highest priority)
     overrides.forEach(o => {
       blockRange(grid, o.day, o.employeeName, o.startTime, o.endTime, o.task);
     });
@@ -89,20 +134,88 @@ export default function SchedulerApp({ initialEmployees }) {
   useEffect(buildSchedule, [buildSchedule]);
 
   // ————————————————————————————————
-  //  RENDERING HELPERS (omitted here for brevity)
+  //  BASIC RENDER (table + error banner)
   // ————————————————————————————————
-  return <div>{/* render schedule & error list */}</div>;
+  return (
+    <div className="flex flex-col">
+      {errors.length > 0 && (
+        <div className="bg-red-600 text-white p-2 text-xs">
+          {errors.length} coverage rule violation(s) – open chat for details.
+        </div>
+      )}
+      {DAYS.map(day => (
+        <div key={day} className="mb-6">
+          <h3 className="font-bold text-lg mb-2">{day}</h3>
+          <ScheduleGrid
+            day={day}
+            schedule={schedule[day]}
+            employees={employees}
+          />
+        </div>
+      ))}
+    </div>
+  );
+});
+
+export default SchedulerApp;
+
+// ———————————————————————————————————
+//  SUBCOMPONENT: Grid renderer
+// ———————————————————————————————————
+function ScheduleGrid({ day, schedule, employees }) {
+  if (!schedule) return <p>Generating…</p>;
+  return (
+    <div className="overflow-x-auto shadow rounded">
+      <table className="min-w-full border-collapse">
+        <thead>
+          <tr className="bg-gray-200">
+            <th className="sticky left-0 bg-gray-200 z-10 p-1 text-left w-40">Employee</th>
+            {TIME_SLOTS.map(t => (
+              <th key={t} className="p-1 text-xs font-normal w-20 border-l">
+                {t}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Object.keys(employees)
+            .sort()
+            .map(name => (
+              <tr key={name} className="odd:bg-gray-50">
+                <td className="sticky left-0 bg-white odd:bg-gray-50 p-1 text-sm border-r">
+                  {name}
+                </td>
+                {schedule[name].map((task, i) => (
+                  <td
+                    key={i}
+                    style={{
+                      backgroundColor: COLORS[task],
+                      color: ['Badges/Projects', 'PTO'].includes(task)
+                        ? 'white'
+                        : 'black',
+                    }}
+                    className="text-center text-[10px] border-l"
+                  >
+                    {task !== schedule[name][i - 1] ? task.replace(/s$/, '') : ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 // ———————————————————————————————————
-//  PURE FUNCTIONS (no React)
+//  PURE HELPERS (algorithm only)
 // ———————————————————————————————————
 function createBlankSchedule(empObj) {
   const schedule = {};
   DAYS.forEach(day => {
     schedule[day] = {};
     Object.keys(empObj).forEach(name => {
-      schedule[day][name] = new Array(SLOT_COUNT).fill('OFF');
+      schedule[day][name] = Array(SLOT_COUNT).fill('OFF');
     });
   });
   return schedule;
@@ -130,46 +243,16 @@ function balanceSlot(grid, day, idx, tgt, emps) {
     }
   });
 
-  // Demote if over‑allocated
   while (count.res > tgt.res) demote(grid, day, idx, 'Reservations', count);
   while (count.disp > tgt.disp) demote(grid, day, idx, 'Dispatch', count);
-
-  // Promote if under‑staffed
-  while (count.res < tgt.res && free.res.length) promote(grid, day, idx, free.res.shift(), 'Reservations', count);
-  while (count.disp < tgt.disp && free.disp.length) promote(grid, day, idx, free.disp.shift(), 'Dispatch', count);
+  while (count.res < tgt.res && free.res.length)
+    promote(grid, day, idx, free.res.shift(), 'Reservations', count);
+  while (count.disp < tgt.disp && free.disp.length)
+    promote(grid, day, idx, free.disp.shift(), 'Dispatch', count);
 }
 
 function demote(grid, day, idx, task, countObj) {
   const victim = Object.keys(grid[day]).find(n => grid[day][n][idx] === task);
   if (!victim) return;
-  grid[day][victim][idx] = 'OFF';
-  if (task === 'Reservations') countObj.res--; else countObj.disp--;
-}
+  grid[day][victim][idx]
 
-function promote(grid, day, idx, name, task, countObj) {
-  grid[day][name][idx] = task;
-  if (task === 'Reservations') countObj.res++; else countObj.disp++;
-}
-
-function inShift(emp, idx) {
-  const time = TIME_SLOTS[idx];
-  return time >= emp.shift.start && time < emp.shift.end && !emp.pto?.some(p => p.day === emp.day);
-}
-
-function validate(grid) {
-  const errs = [];
-  DAYS.forEach(day => {
-    TIME_SLOTS.forEach((time, idx) => {
-      const res = [], disp = [];
-      Object.entries(grid[day]).forEach(([name, slots]) => {
-        if (slots[idx] === 'Reservations') res.push(name);
-        if (slots[idx] === 'Dispatch') disp.push(name);
-      });
-      const isDay = time < '17:00';
-      const tgt = isDay ? DAY_TARGET : EVE_TARGET;
-      if (res.length !== tgt.res || disp.length !== tgt.disp)
-        errs.push({ day, time, res: res.length, disp: disp.length });
-    });
-  });
-  return errs;
-}
