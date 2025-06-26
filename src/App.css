@@ -1,0 +1,69 @@
+/* src/App.css */
+
+.app-container {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  font-family: sans-serif;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  left: 0;
+  background: #f7f7f7;
+  border-right: 1px solid #ddd;
+  width: 250px;
+  transition: width 0.2s ease;
+  overflow-y: auto;
+}
+
+.sidebar.collapsed {
+  width: 40px;
+}
+
+.collapse-btn {
+  display: block;
+  margin: 8px;
+  padding: 4px 6px;
+  font-size: 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.controls {
+  padding: 8px;
+}
+
+.controls h2 {
+  margin-top: 0;
+}
+
+.controls section {
+  margin: 16px 0;
+}
+
+.controls button {
+  display: block;
+  margin-top: 8px;
+}
+
+.controls .error {
+  color: red;
+  margin-top: 4px;
+}
+
+.controls .danger {
+  background: #e53935;
+  color: white;
+  border: none;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.scheduler-panel {
+  flex: 1;
+  overflow-x: auto;
+  padding: 16px;
+}
