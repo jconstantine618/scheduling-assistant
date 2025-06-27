@@ -3,51 +3,69 @@
 .app-container {
   display: flex;
   height: 100vh;
-  overflow: hidden;
+  overflow: hidden; /* Prevent body scroll */
   font-family: sans-serif;
 }
 
 .sidebar {
-  position: sticky;
-  top: 0;
-  left: 0;
+  flex: 0 0 250px; /* Give sidebar a fixed width */
   background: #f7f7f7;
   border-right: 1px solid #ddd;
-  width: 250px;
-  transition: width 0.2s ease;
-  overflow-y: auto;
+  transition: flex-basis 0.3s ease-in-out;
+  overflow-y: auto; /* Allow sidebar to scroll if its content is too long */
+  position: relative; /* Needed for the collapse button positioning */
 }
 
 .sidebar.collapsed {
-  width: 40px;
+  flex-basis: 40px; /* Collapsed width */
 }
+
+.sidebar.collapsed .controls {
+  display: none; /* Hide controls when collapsed */
+}
+
 
 .collapse-btn {
   display: block;
-  margin: 8px;
-  padding: 4px 6px;
-  font-size: 16px;
-  background: none;
+  width: 100%;
+  text-align: center;
+  margin-bottom: 16px;
+  padding: 8px 0;
+  font-size: 20px;
+  background: #e0e0e0;
   border: none;
   cursor: pointer;
 }
 
 .controls {
-  padding: 8px;
+  padding: 0 16px 16px;
 }
 
 .controls h2 {
   margin-top: 0;
+  font-size: 1.2em;
 }
 
 .controls section {
-  margin: 16px 0;
+  margin: 24px 0;
 }
 
 .controls button {
   display: block;
   margin-top: 8px;
+  padding: 8px 12px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
 }
+
+.controls button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
 
 .controls .error {
   color: red;
@@ -56,14 +74,125 @@
 
 .controls .danger {
   background: #e53935;
-  color: white;
-  border: none;
-  padding: 6px 10px;
-  cursor: pointer;
 }
 
 .scheduler-panel {
   flex: 1;
-  overflow-x: auto;
+  overflow: auto; /* This is the key change to allow scrolling */
   padding: 16px;
+}
+
+.day-schedule {
+  margin-bottom: 24px;
+}
+
+.schedule-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed; 
+}
+
+.schedule-table th, .schedule-table td {
+  border: 1px solid #e0e0e0;
+  padding: 8px; 
+  text-align: center;
+  font-size: 11px; 
+  white-space: nowrap; 
+}
+
+/* Header Styles */
+.time-slot-header {
+  font-size: 12px;
+  padding: 8px 4px;
+}
+
+.time-slot-header.full-hour {
+  font-weight: bold;
+  border-left: 2px solid #bbb; /* Make full hour border more prominent */
+}
+
+.time-slot-header.half-hour {
+  border-left: 1px dotted #ccc; /* De-emphasize half-hour border */
+}
+
+
+.schedule-table th:first-child, .schedule-table td:first-child {
+  position: sticky;
+  left: 0;
+  background-color: #f8f9fa;
+  z-index: 10;
+  width: 120px; 
+  text-align: left;
+  font-weight: bold;
+}
+
+.schedule-table thead th {
+  position: sticky;
+  top: 0;
+  background-color: #f2f2f2;
+  z-index: 20;
+}
+
+/* Color Coding for Tasks */
+.task-cell {
+  color: #333;
+  font-weight: 500;
+  overflow: hidden; /* This is the fix: prevent text from overflowing */
+  text-overflow: ellipsis; /* Optional: show '...' for clipped text */
+}
+.task-reservations { background-color: #bbdefb; }
+.task-dispatch { background-color: #c8e6c9; }
+.task-journeydesk { background-color: #fff9c4; }
+.task-network { background-color: #ffccbc; }
+.task-marketing { background-color: #d1c4e9; }
+.task-security { background-color: #cfd8dc; } /* New color */
+.task-sales { background-color: #b2ebf2; }
+.task-scheduling { background-color: #ffecb3; }
+.task-badgesprojects { background-color: #d7ccc8; }
+.task-lunch { background-color: #e0e0e0; }
+.task-pto { background-color: #ffcdd2; color: #b71c1c; }
+
+
+/* Print-specific styles */
+@media print {
+  @page {
+    size: letter landscape;
+    margin: 0.5in;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .app-container {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .scheduler-panel {
+    overflow: visible;
+    padding: 0;
+  }
+
+  .day-schedule {
+    page-break-after: always;
+    margin-bottom: 20px;
+  }
+
+  .day-schedule:last-of-type {
+    page-break-after: avoid;
+  }
+
+  .schedule-table {
+    font-size: 9px;
+  }
+  .schedule-table th, .schedule-table td {
+    padding: 4px;
+  }
 }
