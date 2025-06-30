@@ -35,102 +35,141 @@ function getWeekDates(start) {
 
 // --- Core Scheduling Algorithm ---
 function generateDailySchedule(employees, date) {
-  const schedule = new Map();
-  employees.forEach(emp => schedule.set(emp.name, new Map()));
+    const schedule = new Map();
+    employees.forEach(emp => schedule.set(emp.name, new Map()));
 
-  const dayOfWeek = date.getDay();
-  if (dayOfWeek === 0 || dayOfWeek === 6) return schedule;
+    const dayOfWeek = date.getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) return schedule;
 
-  const dateStr = date.toISOString().split('T')[0];
+    const dateStr = date.toISOString().split('T')[0];
 
-  // Step 1: Initialize schedule with OFF, PTO, and Lunch
-  employees.forEach(emp => {
-    const dailyTasks = schedule.get(emp.name);
-    const hasPTO = Array.isArray(emp.ptoDates) && emp.ptoDates.includes(dateStr);
+    // Step 1: Initialize schedule with OFF or PTO. Mark working hours as 'Available'.
+    employees.forEach(emp => {
+        const dailyTasks = schedule.get(emp.name);
+        const hasPTO = Array.isArray(emp.ptoDates) && emp.ptoDates.includes(dateStr);
+        const shiftStartMinutes = timeToMinutes(emp.shift.start);
+        const shiftEndMinutes = timeToMinutes(emp.shift.end);
 
-    if (hasPTO) {
-        TIME_SLOTS.forEach(slot => dailyTasks.set(slot, 'PTO'));
-        return; 
-    }
-    
-    const shiftStartMinutes = timeToMinutes(emp.shift.start);
-    const shiftEndMinutes = timeToMinutes(emp.shift.end);
-    const lunchStartMinutes = timeToMinutes(emp.lunch.start);
-    const lunchEndMinutes = timeToMinutes(emp.lunch.end);
-
-    TIME_SLOTS.forEach(slot => {
-      const slotMinutes = timeToMinutes(slot);
-      if (slotMinutes >= shiftStartMinutes && slotMinutes < shiftEndMinutes) {
-        if (emp.lunch.start && slotMinutes >= lunchStartMinutes && slotMinutes < lunchEndMinutes) {
-          dailyTasks.set(slot, 'Lunch');
-        } else {
-          if (emp.name === 'Antje') {
-            dailyTasks.set(slot, 'Journey Desk');
-          } else {
-            dailyTasks.set(slot, 'Available');
-          }
-        }
-      } else {
-        dailyTasks.set(slot, 'OFF');
-      }
+        TIME_SLOTS.forEach(slot => {
+            if (hasPTO) {
+                dailyTasks.set(slot, 'PTO');
+                return;
+            }
+            const slotMinutes = timeToMinutes(slot);
+            if (slotMinutes >= shiftStartMinutes && slotMinutes < shiftEndMinutes) {
+                dailyTasks.set(slot, 'Available');
+            } else {
+                dailyTasks.set(slot, 'OFF');
+            }
+        });
     });
-  });
 
-  // Step 2: Fill mandatory coverage slots based on time of day
-  TIME_SLOTS.forEach(slot => {
-    const slotMinutes = timeToMinutes(slot);
-    let neededReservations = 0;
-    let neededDispatch = 0;
-
-    if (slotMinutes >= 480 && slotMinutes < 1020) { // 08:00 - 17:00
-      neededReservations = 3;
-      neededDispatch = 1;
-    } else if (slotMinutes >= 1020) { // 17:00+
-      neededReservations = 2;
-      neededDispatch = 1;
-    } else {
-      return;
-    }
-
-    let dispatchCount = 0;
-    let reservationsCount = 0;
-    
-    const availableEmployees = employees.filter(emp => schedule.get(emp.name)?.get(slot) === 'Available');
+    // Step 2: Intelligent Lunch Assignment
+    const lunchWindows = [
+        { start: '11:00', end: '12:30' },
+        { start: '12:00', end: '13:30' },
+        { start: '12:30', end: '14:00' },
+    ];
+    const renoLunch = { start: '15:00', end: '16:00' };
 
     employees.forEach(emp => {
-        const task = schedule.get(emp.name)?.get(slot);
-        if (task === 'Dispatch') dispatchCount++;
-        if (task === 'Reservations') reservationsCount++;
-    });
+        if (schedule.get(emp.name)?.get(TIME_SLOTS[0]) === 'PTO') return;
 
-    for (const emp of availableEmployees) {
-      if (dispatchCount < neededDispatch && emp.abilities.includes('Dispatch')) {
-        schedule.get(emp.name).set(slot, 'Dispatch');
-        dispatchCount++;
-      }
-    }
-    
-    for (const emp of availableEmployees) {
-      if (schedule.get(emp.name)?.get(slot) === 'Available') {
-        if (reservationsCount < neededReservations && emp.abilities.includes('Reservations')) {
-          schedule.get(emp.name).set(slot, 'Reservations');
-          reservationsCount++;
+        const empLunchWindows = emp.name === 'Katy' ? [renoLunch] : lunchWindows;
+        let bestLunchWindow = null;
+        let bestScore = -Infinity;
+
+        // Find the best possible lunch window for this employee
+        for (const window of empLunchWindows) {
+            const lunchStartMinutes = timeToMinutes(window.start);
+            const lunchEndMinutes = timeToMinutes(window.end);
+            let isWindowViable = true;
+            let windowScore = 0;
+
+            // Check if the window is within the employee's available time
+            for (let min = lunchStartMinutes; min < lunchEndMinutes; min += 30) {
+                const slot = TIME_SLOTS.find(s => timeToMinutes(s) === min);
+                if (!slot || schedule.get(emp.name)?.get(slot) !== 'Available') {
+                    isWindowViable = false;
+                    break;
+                }
+            }
+            if (!isWindowViable) continue;
+
+            // Calculate the impact on coverage if this lunch is taken
+            for (let min = lunchStartMinutes; min < lunchEndMinutes; min += 30) {
+                const slot = TIME_SLOTS.find(s => timeToMinutes(s) === min);
+                const availableForSlot = employees.filter(e => {
+                    const task = schedule.get(e.name).get(slot);
+                    return e.name !== emp.name && task === 'Available';
+                });
+                const resCoverage = availableForSlot.filter(e => e.abilities.includes('Reservations')).length;
+                const dispCoverage = availableForSlot.filter(e => e.abilities.includes('Dispatch')).length;
+
+                // Penalize heavily for dropping below minimums
+                if (resCoverage < 3 || dispCoverage < 1) {
+                    windowScore -= 100; 
+                } else {
+                    windowScore += resCoverage + dispCoverage;
+                }
+            }
+
+            if (windowScore > bestScore) {
+                bestScore = windowScore;
+                bestLunchWindow = window;
+            }
         }
-      }
-    }
-  });
 
-  // Step 3: Fill remaining 'Available' slots with specialist tasks
-  employees.forEach(emp => {
-    const dailyTasks = schedule.get(emp.name);
-    TIME_SLOTS.forEach(slot => {
-      if (dailyTasks.get(slot) === 'Available') {
-        dailyTasks.set(slot, emp.specialistTask);
-      }
+        // Assign the best found lunch window
+        if (bestLunchWindow) {
+            const start = timeToMinutes(bestLunchWindow.start);
+            const end = timeToMinutes(bestLunchWindow.end);
+            for (let min = start; min < end; min += 30) {
+                const slot = TIME_SLOTS.find(s => timeToMinutes(s) === min);
+                if(slot) schedule.get(emp.name).set(slot, 'Lunch');
+            }
+        }
     });
-  });
 
-  return schedule;
+    // Step 3: Fill mandatory coverage slots
+    TIME_SLOTS.forEach(slot => {
+        const slotMinutes = timeToMinutes(slot);
+        let neededReservations = (slotMinutes >= 480 && slotMinutes < 1020) ? 3 : (slotMinutes >= 1020 ? 2 : 0);
+        let neededDispatch = (slotMinutes >= 480) ? 1 : 0;
+
+        if (neededDispatch === 0 && neededReservations === 0) return;
+
+        const availableForSlot = employees.filter(e => schedule.get(e.name).get(slot) === 'Available');
+        
+        // Assign Dispatch
+        let assignedDispatch = 0;
+        for(const emp of availableForSlot) {
+            if (assignedDispatch < neededDispatch && emp.abilities.includes('Dispatch')) {
+                schedule.get(emp.name).set(slot, 'Dispatch');
+                assignedDispatch++;
+            }
+        }
+
+        // Assign Reservations
+        let assignedReservations = 0;
+        for(const emp of availableForSlot) {
+            if (schedule.get(emp.name).get(slot) === 'Available' && assignedReservations < neededReservations && emp.abilities.includes('Reservations')) {
+                schedule.get(emp.name).set(slot, 'Reservations');
+                assignedReservations++;
+            }
+        }
+    });
+
+    // Step 4: Fill remaining 'Available' slots with specialist tasks
+    employees.forEach(emp => {
+        TIME_SLOTS.forEach(slot => {
+            if (schedule.get(emp.name).get(slot) === 'Available') {
+                schedule.get(emp.name).set(slot, emp.specialistTask);
+            }
+        });
+    });
+
+    return schedule;
 }
 
 
@@ -210,7 +249,7 @@ const SchedulerApp = forwardRef(function SchedulerApp(
   const weeklySchedule = useMemo(() => {
     const fullSchedule = new Map();
     weekDates.forEach(date => {
-        if (date.getDay() >= 1 && date.getDay() <= 5) { // Only for Mon-Fri
+        if (date.getDay() >= 1 && date.getDay() <= 5) {
             fullSchedule.set(date.toISOString().split('T')[0], generateDailySchedule(employees, date));
         }
     });
@@ -218,15 +257,6 @@ const SchedulerApp = forwardRef(function SchedulerApp(
   }, [employees, weekDates]);
 
   useImperativeHandle(ref, () => ({
-    updateEmployeePTOs(newPtoMap) {
-        setManualPto(currentManualPto => {
-            const updated = { ...currentManualPto };
-            for (const name in newPtoMap) {
-                updated[name] = [...new Set([...(updated[name] || []), ...newPtoMap[name]])];
-            }
-            return updated;
-        });
-    },
     clearOverrides() {
         setManualPto({});
     }

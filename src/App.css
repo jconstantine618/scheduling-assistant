@@ -82,6 +82,104 @@
   padding: 16px;
 }
 
+/* --- Employee Management Styles --- */
+.employee-management .employee-list {
+    list-style: none;
+    padding: 0;
+    margin-bottom: 16px;
+}
+.employee-management .employee-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+}
+.employee-management .edit-btn, .employee-management .remove-btn {
+    padding: 4px 8px;
+    font-size: 12px;
+    margin-left: 4px;
+}
+.employee-management .edit-btn {
+    background-color: #ffc107;
+}
+.employee-management .remove-btn {
+    background-color: #dc3545;
+}
+
+
+/* --- Modal Styles --- */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  padding: 24px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-content h2 {
+    margin-top: 0;
+}
+
+.form-group {
+    margin-bottom: 16px;
+}
+.form-group label {
+    display: block;
+    margin-bottom: 4px;
+    font-weight: bold;
+}
+.form-group input[type="text"],
+.form-group input[type="time"] {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+.form-group-inline {
+    display: flex;
+    gap: 16px;
+}
+.form-group-inline .form-group {
+    flex: 1;
+}
+
+.checkbox-group {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+}
+.checkbox-group label {
+    font-weight: normal;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 24px;
+}
+.modal-actions .primary {
+    background-color: #28a745;
+}
+
+
+/* --- Schedule Table Styles --- */
 .day-schedule {
   margin-bottom: 24px;
 }
@@ -100,7 +198,6 @@
   white-space: nowrap; 
 }
 
-/* Header Styles */
 .time-slot-header {
   font-size: 12px;
   padding: 8px 4px;
@@ -108,11 +205,11 @@
 
 .time-slot-header.full-hour {
   font-weight: bold;
-  border-left: 2px solid #bbb; /* Make full hour border more prominent */
+  border-left: 2px solid #bbb;
 }
 
 .time-slot-header.half-hour {
-  border-left: 1px dotted #ccc; /* De-emphasize half-hour border */
+  border-left: 1px dotted #ccc;
 }
 
 
@@ -133,19 +230,18 @@
   z-index: 20;
 }
 
-/* Color Coding for Tasks */
 .task-cell {
   color: #333;
   font-weight: 500;
-  overflow: hidden; /* This is the fix: prevent text from overflowing */
-  text-overflow: ellipsis; /* Optional: show '...' for clipped text */
+  overflow: hidden; 
+  text-overflow: ellipsis;
 }
 .task-reservations { background-color: #bbdefb; }
 .task-dispatch { background-color: #c8e6c9; }
 .task-journeydesk { background-color: #fff9c4; }
 .task-network { background-color: #ffccbc; }
 .task-marketing { background-color: #d1c4e9; }
-.task-security { background-color: #cfd8dc; } /* New color */
+.task-security { background-color: #cfd8dc; } 
 .task-sales { background-color: #b2ebf2; }
 .task-scheduling { background-color: #ffecb3; }
 .task-badgesprojects { background-color: #d7ccc8; }
