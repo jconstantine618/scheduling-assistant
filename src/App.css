@@ -198,6 +198,7 @@
   white-space: nowrap; 
 }
 
+/* Header Styles */
 .time-slot-header {
   font-size: 12px;
   padding: 8px 4px;
@@ -205,11 +206,11 @@
 
 .time-slot-header.full-hour {
   font-weight: bold;
-  border-left: 2px solid #bbb;
+  border-left: 2px solid #bbb; /* Make full hour border more prominent */
 }
 
 .time-slot-header.half-hour {
-  border-left: 1px dotted #ccc;
+  border-left: 1px dotted #ccc; /* De-emphasize half-hour border */
 }
 
 
@@ -230,6 +231,7 @@
   z-index: 20;
 }
 
+/* Color Coding for Tasks */
 .task-cell {
   color: #333;
   font-weight: 500;
@@ -247,6 +249,7 @@
 .task-badgesprojects { background-color: #d7ccc8; }
 .task-lunch { background-color: #e0e0e0; }
 .task-pto { background-color: #ffcdd2; color: #b71c1c; }
+.task-meeting { background-color: #ffab91; color: #3e2723; } /* New style for meetings */
 
 
 /* Print-specific styles */

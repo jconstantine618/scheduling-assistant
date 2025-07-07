@@ -7,7 +7,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 
-// Replicate __dirname functionality in ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -15,83 +14,107 @@ const upload = multer();
 const app = express();
 
 const {
-  PORT = 5001, // Use port 5001 from .env file
+  PORT = 5001,
   GOOGLE_APPLICATION_CREDENTIALS,
-  GOOGLE_CALENDAR_ID,
+  GOOGLE_PTO_CALENDAR_ID,
+  GOOGLE_MEETINGS_CALENDAR_ID, // New calendar ID
 } = process.env;
 
-// Define the list of known employee names directly in the server
+const serviceAccountPath = path.resolve(__dirname, GOOGLE_APPLICATION_CREDENTIALS);
+
 const employeeNames = [
   'Antje', 'Adam', 'Heather', 'Sheridan', 'Katy', 'SydPo', 
   'Elliott', 'Brian Adie', 'Paul', 'Shelby', 'SydMo'
 ];
 
-// middleware
 app.use(cors());
 app.use(express.json());
 
-// ... (your other endpoints like parse-pto remain the same)
-app.post('/api/parse-pto', upload.single('file'), async (req, res) => {
-  return res.json({
-    pto: {
-        'Heather': ['2025-06-25'],
-        'Sheridan': ['2025-06-24'],
+// Helper function to fetch events from a given calendar
+async function fetchCalendarEvents(auth, calendarId, timeMin, timeMax) {
+    if (!calendarId) return [];
+    const calendar = google.calendar({ version: 'v3', auth });
+    try {
+        const result = await calendar.events.list({
+            calendarId,
+            timeMin,
+            timeMax,
+            singleEvents: true,
+            orderBy: 'startTime'
+        });
+        return result.data.items || [];
+    } catch (error) {
+        console.error(`Error fetching from calendar ${calendarId}:`, error.message);
+        return []; // Return empty array on error to not crash the server
     }
-  });
-});
+}
 
 
-// Calendar PTO endpoint: fetch from your Google Calendar
-process.env.GOOGLE_APPLICATION_CREDENTIALS = GOOGLE_APPLICATION_CREDENTIALS;
-app.get('/api/pto-calendar', async (req, res) => {
+// Updated endpoint to fetch from both calendars
+app.get('/api/calendar-data', async (req, res) => {
   try {
     const { start, end } = req.query;
     if (!start || !end) {
         return res.status(400).json({ error: 'Missing start or end date query parameters.' });
     }
+    
     const auth = new google.auth.GoogleAuth({
+      keyFile: serviceAccountPath, 
       scopes: ['https://www.googleapis.com/auth/calendar.readonly']
     });
-    const calendar = google.calendar({ version: 'v3', auth });
-    const result = await calendar.events.list({
-      calendarId: GOOGLE_CALENDAR_ID,
-      timeMin: start,
-      timeMax: end,
-      singleEvents: true,
-      orderBy: 'startTime'
-    });
 
+    // Fetch events from both calendars in parallel
+    const [ptoEvents, meetingEvents] = await Promise.all([
+        fetchCalendarEvents(auth, GOOGLE_PTO_CALENDAR_ID, start, end),
+        fetchCalendarEvents(auth, GOOGLE_MEETINGS_CALENDAR_ID, start, end)
+    ]);
+
+    // Process PTO events (full-day events)
     const ptoMap = {};
-    if (result.data.items) {
-        for (const evt of result.data.items) {
-            if (evt.summary && (evt.start.date || evt.start.dateTime)) {
-                // Find which employee this event summary belongs to
-                const employeeName = employeeNames.find(name => evt.summary.startsWith(name));
-
-                if (employeeName) {
-                    const date = (evt.start.date || evt.start.dateTime).split('T')[0];
-                    ptoMap[employeeName] = ptoMap[employeeName] || [];
-                    ptoMap[employeeName].push(date);
-                }
+    for (const evt of ptoEvents) {
+        if (evt.summary) {
+            const employeeName = employeeNames.find(name => evt.summary.startsWith(name));
+            if (employeeName) {
+                const date = (evt.start.date || evt.start.dateTime).split('T')[0];
+                ptoMap[employeeName] = ptoMap[employeeName] || [];
+                ptoMap[employeeName].push(date);
             }
         }
     }
-    return res.json({ ptoMap });
+
+    // Process Meeting events (events with specific start/end times)
+    const meetingsMap = {};
+     for (const evt of meetingEvents) {
+        if (evt.summary && evt.start.dateTime && evt.end.dateTime) {
+             const employeeName = employeeNames.find(name => evt.summary.startsWith(name));
+             if(employeeName) {
+                if (!meetingsMap[employeeName]) {
+                    meetingsMap[employeeName] = [];
+                }
+                meetingsMap[employeeName].push({
+                    start: evt.start.dateTime,
+                    end: evt.end.dateTime,
+                });
+             }
+        }
+     }
+
+    return res.json({ ptoMap, meetingsMap });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message });
   }
 });
 
-// if you build React into /build, serve it here
+
 app.use(express.static(path.join(__dirname, 'build')));
 app.get('*', (req, res) =>
   res.sendFile(path.join(__dirname, 'build', 'index.html'))
 );
 
-// kick off the server
 app.listen(PORT, () => {
-  console.log(`🔑 Google Credentials Path = ${!!process.env.GOOGLE_APPLICATION_CREDENTIALS}`);
-  console.log(`🌐 Calendar ID → ${GOOGLE_CALENDAR_ID}`);
+  console.log(`🔑 Google Credentials Path = ${serviceAccountPath}`);
+  console.log(`🌐 PTO Calendar ID → ${GOOGLE_PTO_CALENDAR_ID}`);
+  console.log(`📅 Meetings Calendar ID → ${GOOGLE_MEETINGS_CALENDAR_ID}`);
   console.log(`☁️ API listening on http://localhost:${PORT}`);
 });

@@ -43,28 +43,48 @@ function generateDailySchedule(employees, date) {
 
     const dateStr = date.toISOString().split('T')[0];
 
-    // Step 1: Initialize schedule with OFF or PTO. Mark working hours as 'Available'.
+    // Step 1: Initialize with OFF, PTO, and Meetings
     employees.forEach(emp => {
         const dailyTasks = schedule.get(emp.name);
         const hasPTO = Array.isArray(emp.ptoDates) && emp.ptoDates.includes(dateStr);
-        const shiftStartMinutes = timeToMinutes(emp.shift.start);
-        const shiftEndMinutes = timeToMinutes(emp.shift.end);
-
+        
         TIME_SLOTS.forEach(slot => {
             if (hasPTO) {
                 dailyTasks.set(slot, 'PTO');
                 return;
             }
+
             const slotMinutes = timeToMinutes(slot);
+            const shiftStartMinutes = timeToMinutes(emp.shift.start);
+            const shiftEndMinutes = timeToMinutes(emp.shift.end);
+
             if (slotMinutes >= shiftStartMinutes && slotMinutes < shiftEndMinutes) {
                 dailyTasks.set(slot, 'Available');
             } else {
                 dailyTasks.set(slot, 'OFF');
             }
         });
+        
+        // Overlay meetings on top of 'Available' slots
+        if (Array.isArray(emp.meetings)) {
+            emp.meetings.forEach(meeting => {
+                const meetingDate = meeting.start.split('T')[0];
+                if (meetingDate === dateStr) {
+                    const startMinutes = timeToMinutes(meeting.start.split('T')[1]);
+                    const endMinutes = timeToMinutes(meeting.end.split('T')[1]);
+                    TIME_SLOTS.forEach(slot => {
+                        const slotMinutes = timeToMinutes(slot);
+                        if (slotMinutes >= startMinutes && slotMinutes < endMinutes) {
+                            dailyTasks.set(slot, 'Meeting');
+                        }
+                    });
+                }
+            });
+        }
     });
 
     // Step 2: Intelligent Lunch Assignment
+    // ... (lunch logic remains the same, but now respects "Meeting" blocks)
     const lunchWindows = [
         { start: '11:00', end: '12:30' },
         { start: '12:00', end: '13:30' },
@@ -79,14 +99,12 @@ function generateDailySchedule(employees, date) {
         let bestLunchWindow = null;
         let bestScore = -Infinity;
 
-        // Find the best possible lunch window for this employee
         for (const window of empLunchWindows) {
             const lunchStartMinutes = timeToMinutes(window.start);
             const lunchEndMinutes = timeToMinutes(window.end);
             let isWindowViable = true;
             let windowScore = 0;
 
-            // Check if the window is within the employee's available time
             for (let min = lunchStartMinutes; min < lunchEndMinutes; min += 30) {
                 const slot = TIME_SLOTS.find(s => timeToMinutes(s) === min);
                 if (!slot || schedule.get(emp.name)?.get(slot) !== 'Available') {
@@ -96,7 +114,6 @@ function generateDailySchedule(employees, date) {
             }
             if (!isWindowViable) continue;
 
-            // Calculate the impact on coverage if this lunch is taken
             for (let min = lunchStartMinutes; min < lunchEndMinutes; min += 30) {
                 const slot = TIME_SLOTS.find(s => timeToMinutes(s) === min);
                 const availableForSlot = employees.filter(e => {
@@ -105,10 +122,9 @@ function generateDailySchedule(employees, date) {
                 });
                 const resCoverage = availableForSlot.filter(e => e.abilities.includes('Reservations')).length;
                 const dispCoverage = availableForSlot.filter(e => e.abilities.includes('Dispatch')).length;
-
-                // Penalize heavily for dropping below minimums
+                
                 if (resCoverage < 3 || dispCoverage < 1) {
-                    windowScore -= 100; 
+                    windowScore -= 100;
                 } else {
                     windowScore += resCoverage + dispCoverage;
                 }
@@ -120,7 +136,6 @@ function generateDailySchedule(employees, date) {
             }
         }
 
-        // Assign the best found lunch window
         if (bestLunchWindow) {
             const start = timeToMinutes(bestLunchWindow.start);
             const end = timeToMinutes(bestLunchWindow.end);
@@ -131,17 +146,13 @@ function generateDailySchedule(employees, date) {
         }
     });
 
-    // Step 3: Fill mandatory coverage slots
+    // Step 3 & 4 remain the same
     TIME_SLOTS.forEach(slot => {
         const slotMinutes = timeToMinutes(slot);
         let neededReservations = (slotMinutes >= 480 && slotMinutes < 1020) ? 3 : (slotMinutes >= 1020 ? 2 : 0);
         let neededDispatch = (slotMinutes >= 480) ? 1 : 0;
-
         if (neededDispatch === 0 && neededReservations === 0) return;
-
         const availableForSlot = employees.filter(e => schedule.get(e.name).get(slot) === 'Available');
-        
-        // Assign Dispatch
         let assignedDispatch = 0;
         for(const emp of availableForSlot) {
             if (assignedDispatch < neededDispatch && emp.abilities.includes('Dispatch')) {
@@ -149,8 +160,6 @@ function generateDailySchedule(employees, date) {
                 assignedDispatch++;
             }
         }
-
-        // Assign Reservations
         let assignedReservations = 0;
         for(const emp of availableForSlot) {
             if (schedule.get(emp.name).get(slot) === 'Available' && assignedReservations < neededReservations && emp.abilities.includes('Reservations')) {
@@ -160,7 +169,6 @@ function generateDailySchedule(employees, date) {
         }
     });
 
-    // Step 4: Fill remaining 'Available' slots with specialist tasks
     employees.forEach(emp => {
         TIME_SLOTS.forEach(slot => {
             if (schedule.get(emp.name).get(slot) === 'Available') {
@@ -212,8 +220,7 @@ const SchedulerApp = forwardRef(function SchedulerApp(
   { initialEmployees = [], weekStart },
   ref
 ) {
-  const [ptoMap, setPtoMap] = useState({});
-  const [manualPto, setManualPto] = useState({});
+  const [calendarData, setCalendarData] = useState({ ptoMap: {}, meetingsMap: {} });
   const weekDates = useMemo(() => getWeekDates(weekStart || new Date()), [weekStart]);
   
   useEffect(() => {
@@ -225,25 +232,24 @@ const SchedulerApp = forwardRef(function SchedulerApp(
     end.setDate(end.getDate() + 7);
     const endISO = end.toISOString();
 
-    fetch(`/api/pto-calendar?start=${startISO}&end=${endISO}`)
+    fetch(`/api/calendar-data?start=${startISO}&end=${endISO}`)
       .then(res => res.ok ? res.json() : Promise.reject(res.statusText))
-      .then(data => setPtoMap(data.ptoMap || {}))
+      .then(data => setCalendarData({ ptoMap: data.ptoMap || {}, meetingsMap: data.meetingsMap || {} }))
       .catch(err => {
-        console.error('Fetch PTO failed:', err);
-        setPtoMap({});
+        console.error('Fetch calendar data failed:', err);
+        setCalendarData({ ptoMap: {}, meetingsMap: {} });
       });
   }, [weekStart]);
 
   const employees = useMemo(() => {
     return initialEmployees.map(emp => {
-        const calendarDates = ptoMap[emp.name] || [];
-        const manualDates = manualPto[emp.name] || [];
         return {
             ...emp,
-            ptoDates: [...new Set([...calendarDates, ...manualDates])],
+            ptoDates: calendarData.ptoMap[emp.name] || [],
+            meetings: calendarData.meetingsMap[emp.name] || [],
         };
     });
-  }, [initialEmployees, ptoMap, manualPto]);
+  }, [initialEmployees, calendarData]);
 
 
   const weeklySchedule = useMemo(() => {
@@ -258,7 +264,7 @@ const SchedulerApp = forwardRef(function SchedulerApp(
 
   useImperativeHandle(ref, () => ({
     clearOverrides() {
-        setManualPto({});
+        // This might need adjustment based on how overrides are handled in the future
     }
   }));
   
