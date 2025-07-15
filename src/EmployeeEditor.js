@@ -12,13 +12,16 @@ export default function EmployeeEditor({ employee, onSave, onClose }) {
 
   useEffect(() => {
     // When the component loads or the employee prop changes, populate the form
+    // If it's a new employee, provide a default structure including the email.
     setFormData(employee || {
       name: '',
+      email: '',
       shift: { start: '09:00', end: '17:00' },
       lunch: { start: '12:00', end: '13:30' },
       hours: 40,
       abilities: [],
       specialistTask: '',
+      specialistTarget: 0, // Default for new employee
     });
   }, [employee]);
 
@@ -28,7 +31,9 @@ export default function EmployeeEditor({ employee, onSave, onClose }) {
       const [parent, child] = name.split('.');
       setFormData(prev => ({ ...prev, [parent]: { ...prev[parent], [child]: value } }));
     } else {
-      setFormData(prev => ({ ...prev, [name]: value }));
+      // Handle numeric inputs for target hours
+      const finalValue = name === 'specialistTarget' ? parseInt(value, 10) || 0 : value;
+      setFormData(prev => ({ ...prev, [name]: finalValue }));
     }
   };
 
@@ -36,7 +41,7 @@ export default function EmployeeEditor({ employee, onSave, onClose }) {
     const { name, checked } = e.target;
     setFormData(prev => {
       const newAbilities = checked
-        ? [...prev.abilities, name]
+        ? [...(prev.abilities || []), name]
         : prev.abilities.filter(ability => ability !== name);
       return { ...prev, abilities: newAbilities };
     });
@@ -47,17 +52,25 @@ export default function EmployeeEditor({ employee, onSave, onClose }) {
     onSave(formData);
   };
 
-  // The modal should not render if there's no employee data to edit/create
-  if (!employee) return null;
-
   return (
-    <div className="modal-overlay">
-      <div className="modal-content">
-        <h2>{formData.name ? 'Edit Employee' : 'Add New Employee'}</h2>
+    <div className="modal-backdrop">
+      <div className="modal">
         <form onSubmit={handleSubmit}>
+          <h3>{employee ? 'Edit Employee' : 'Add Employee'}</h3>
           <div className="form-group">
             <label>Name</label>
-            <input type="text" name="name" value={formData.name || ''} onChange={handleChange} required disabled={!!employee.name} />
+            <input type="text" name="name" value={formData.name || ''} onChange={handleChange} required />
+          </div>
+          <div className="form-group">
+            <label>Email</label>
+            <input 
+              type="email" 
+              name="email" 
+              value={formData.email || ''} 
+              onChange={handleChange} 
+              placeholder="employee@email.com" 
+              required 
+            />
           </div>
           <div className="form-group-inline">
             <div className="form-group">
@@ -79,9 +92,21 @@ export default function EmployeeEditor({ employee, onSave, onClose }) {
                 <input type="time" name="lunch.end" value={formData.lunch?.end || ''} onChange={handleChange} />
             </div>
           </div>
-          <div className="form-group">
-            <label>Specialist Task</label>
-            <input type="text" name="specialistTask" value={formData.specialistTask || ''} onChange={handleChange} />
+          <div className="form-group-inline">
+            <div className="form-group">
+              <label>Specialist Task</label>
+              <input type="text" name="specialistTask" value={formData.specialistTask || ''} onChange={handleChange} />
+            </div>
+            {/* --- New Specialist Target Field --- */}
+            <div className="form-group">
+              <label>Specialist Target (hrs)</label>
+              <input 
+                type="number" 
+                name="specialistTarget" 
+                value={formData.specialistTarget || 0} 
+                onChange={handleChange} 
+              />
+            </div>
           </div>
           <div className="form-group">
             <label>Abilities</label>

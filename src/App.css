@@ -1,297 +1,347 @@
 /* src/App.css */
 
-.app-container {
+/* --- Global Styles & Variables --- */
+:root {
+  --primary-color: #007bff;
+  --primary-hover: #0056b3;
+  --secondary-color: #6c757d;
+  --danger-color: #dc3545;
+  --danger-hover: #c82333;
+  --success-color: #28a745;
+  --success-hover: #218838;
+  --light-gray: #f8f9fa;
+  --medium-gray: #dee2e6;
+  --dark-gray: #343a40;
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  --border-radius: 8px;
+  --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #eef2f7;
+  color: var(--dark-gray);
+}
+
+/* --- Main App Layout --- */
+.App {
   display: flex;
   height: 100vh;
-  overflow: hidden; /* Prevent body scroll */
-  font-family: sans-serif;
-}
-
-.sidebar {
-  flex: 0 0 250px; /* Give sidebar a fixed width */
-  background: #f7f7f7;
-  border-right: 1px solid #ddd;
-  transition: flex-basis 0.3s ease-in-out;
-  overflow-y: auto; /* Allow sidebar to scroll if its content is too long */
-  position: relative; /* Needed for the collapse button positioning */
-}
-
-.sidebar.collapsed {
-  flex-basis: 40px; /* Collapsed width */
-}
-
-.sidebar.collapsed .controls {
-  display: none; /* Hide controls when collapsed */
-}
-
-
-.collapse-btn {
-  display: block;
-  width: 100%;
-  text-align: center;
-  margin-bottom: 16px;
-  padding: 8px 0;
-  font-size: 20px;
-  background: #e0e0e0;
-  border: none;
-  cursor: pointer;
+  overflow: hidden;
 }
 
 .controls {
-  padding: 0 16px 16px;
+  width: 300px; /* Slightly wider for the chatbot */
+  padding: 20px;
+  background-color: #ffffff;
+  border-right: 1px solid var(--medium-gray);
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 20px; /* Adjusted gap */
 }
 
-.controls h2 {
-  margin-top: 0;
-  font-size: 1.2em;
+.main-content {
+  flex-grow: 1;
+  padding: 20px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 
-.controls section {
-  margin: 24px 0;
-}
-
-.controls button {
-  display: block;
-  margin-top: 8px;
-  padding: 8px 12px;
-  background-color: #007bff;
-  color: white;
+/* --- Buttons & Inputs --- */
+button {
   border: none;
-  border-radius: 4px;
+  padding: 10px 15px;
+  border-radius: var(--border-radius);
   cursor: pointer;
+  font-weight: 500;
+  transition: background-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+  background-color: var(--primary-color);
+  color: white;
 }
 
-.controls button:disabled {
-    background-color: #cccccc;
+button:hover {
+  background-color: var(--primary-hover);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+button:disabled {
+    background-color: var(--secondary-color);
     cursor: not-allowed;
 }
 
-
-.controls .error {
-  color: red;
-  margin-top: 4px;
+button.edit {
+  background-color: #ffc107;
+  color: black;
+}
+button.edit:hover {
+  background-color: #e0a800;
 }
 
-.controls .danger {
-  background: #e53935;
+button.remove {
+  background-color: var(--danger-color);
+}
+button.remove:hover {
+  background-color: var(--danger-hover);
 }
 
-.scheduler-panel {
-  flex: 1;
-  overflow: auto; /* This is the key change to allow scrolling */
-  padding: 16px;
+button.add-new {
+  background-color: var(--success-color);
+}
+button.add-new:hover {
+  background-color: var(--success-hover);
 }
 
-/* --- Employee Management Styles --- */
-.employee-management .employee-list {
-    list-style: none;
-    padding: 0;
-    margin-bottom: 16px;
+input[type="date"],
+input[type="time"],
+input[type="text"],
+input[type="email"],
+input[type="number"] {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--medium-gray);
+  border-radius: var(--border-radius);
+  box-sizing: border-box;
 }
-.employee-management .employee-list li {
+
+/* --- Controls Panel Specifics --- */
+.controls h2 {
+  margin-top: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--medium-gray);
+  flex-shrink: 0; /* Prevent title from shrinking */
+}
+
+.view-switcher {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px;
-    border-bottom: 1px solid #eee;
+    gap: 10px;
+    flex-shrink: 0;
 }
-.employee-management .edit-btn, .employee-management .remove-btn {
-    padding: 4px 8px;
-    font-size: 12px;
-    margin-left: 4px;
+.view-switcher button {
+    flex: 1;
 }
-.employee-management .edit-btn {
-    background-color: #ffc107;
-}
-.employee-management .remove-btn {
-    background-color: #dc3545;
+.view-switcher button.active {
+    background-color: var(--primary-hover);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
 }
 
+.scheduler-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    flex-shrink: 0;
+}
 
-/* --- Modal Styles --- */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.6);
+.navigation {
   display: flex;
+  justify-content: space-between;
+}
+
+/* --- Admin Panel --- */
+.admin-panel {
+    padding: 10px;
+    height: 100%;
+    overflow-y: auto;
+}
+
+.admin-section {
+    margin-bottom: 40px;
+}
+.admin-section h2 {
+    border-bottom: 1px solid var(--medium-gray);
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+.rule-card {
+    background-color: #fff;
+    padding: 20px;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    margin-bottom: 20px;
+}
+
+.rule-input-group {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+.rule-input-group label {
+    font-weight: 500;
+    width: 120px;
+}
+.rule-input-group input {
+    max-width: 100px;
+}
+
+.save-rules-container, .admin-actions {
+    display: flex;
+    justify-content: flex-start;
+    margin-top: 20px;
+}
+.save-rules-container button, .admin-actions button {
+    width: auto;
+    min-width: 200px;
+}
+
+.employee-list-admin {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.employee-item {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  justify-content: center;
+  padding: 12px;
+  background-color: var(--light-gray);
+  border-radius: var(--border-radius);
+  transition: background-color 0.2s;
+}
+.employee-item:hover {
+    background-color: #e9ecef;
+}
+
+.employee-item div {
+  display: flex;
+  gap: 5px;
+}
+
+/* --- Modal (EmployeeEditor) Styles --- */
+.modal-backdrop {
+  position: fixed; top: 0; left: 0;
+  width: 100%; height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex; justify-content: center; align-items: center;
   z-index: 1000;
 }
 
-.modal-content {
-  background: white;
-  padding: 24px;
-  border-radius: 8px;
-  width: 90%;
-  max-width: 500px;
-  max-height: 90vh;
-  overflow-y: auto;
+.modal {
+  background-color: white; padding: 30px;
+  border-radius: var(--border-radius);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+  width: 100%; max-width: 500px;
 }
 
-.modal-content h2 {
-    margin-top: 0;
+.modal h3 { margin-top: 0; }
+.form-group { margin-bottom: 15px; }
+.form-group-inline { display: flex; gap: 15px; margin-bottom: 15px; }
+.form-group-inline .form-group { flex: 1; margin-bottom: 0; }
+.checkbox-group { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.modal-actions button[type="button"] { background-color: var(--secondary-color); }
+.modal-actions button[type="button"]:hover { background-color: #5a6268; }
+
+/* --- Loading Overlay --- */
+.loading-overlay {
+  position: fixed; top: 0; left: 0;
+  width: 100%; height: 100%;
+  background-color: rgba(255, 255, 255, 0.8);
+  display: flex; justify-content: center; align-items: center;
+  font-size: 1.5rem; z-index: 2000;
 }
 
-.form-group {
-    margin-bottom: 16px;
+/* --- Scheduler (FullCalendar) Styles --- */
+.scheduler-container { height: 100%; }
+.fc { background-color: white; border-radius: var(--border-radius); padding: 10px; box-shadow: var(--box-shadow); }
+
+/* --- Chatbot Styles (Updated for Controls Panel) --- */
+.chatbot-wrapper {
+    flex-grow: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--medium-gray);
+    padding-top: 20px;
 }
-.form-group label {
-    display: block;
-    margin-bottom: 4px;
-    font-weight: bold;
+
+.chatbot-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background-color: var(--light-gray);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--medium-gray);
+    overflow: hidden;
 }
-.form-group input[type="text"],
-.form-group input[type="time"] {
-    width: 100%;
+
+.chatbot-title {
+    padding: 10px 15px;
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--dark-gray);
+    background-color: #fff;
+    border-bottom: 1px solid var(--medium-gray);
+    flex-shrink: 0;
+}
+
+.chatbot-messages {
+    flex-grow: 1;
+    padding: 10px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.message {
+    padding: 8px 12px;
+    border-radius: 18px;
+    max-width: 90%;
+    line-height: 1.4;
+    font-size: 0.9rem;
+    word-wrap: break-word; /* Ensures long words wrap */
+    white-space: pre-wrap; /* Respects newlines and wraps text */
+}
+
+.message.user {
+    background-color: var(--primary-color);
+    color: white;
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+}
+
+.message.bot {
+    background-color: #fff;
+    color: var(--dark-gray);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+    border: 1px solid var(--medium-gray);
+}
+
+.chatbot-input-area {
+    display: flex;
+    padding: 10px;
+    border-top: 1px solid var(--medium-gray);
+    background-color: #fff;
+    align-items: flex-end; /* Aligns button with bottom of textarea */
+}
+
+.chatbot-input-area textarea {
+    flex-grow: 1;
+    border: 1px solid var(--medium-gray);
+    border-radius: var(--border-radius);
     padding: 8px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-}
-.form-group-inline {
-    display: flex;
-    gap: 16px;
-}
-.form-group-inline .form-group {
-    flex: 1;
+    margin-right: 8px;
+    resize: none; /* Prevent manual user resizing */
+    font-family: var(--font-family);
+    font-size: 0.9rem;
+    line-height: 1.4;
+    max-height: 120px; /* Limit growth to prevent huge inputs */
+    overflow-y: auto; /* Add scrollbar if it gets too big */
 }
 
-.checkbox-group {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-}
-.checkbox-group label {
-    font-weight: normal;
-}
-
-.modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 24px;
-}
-.modal-actions .primary {
-    background-color: #28a745;
-}
-
-
-/* --- Schedule Table Styles --- */
-.day-schedule {
-  margin-bottom: 24px;
-}
-
-.schedule-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed; 
-}
-
-.schedule-table th, .schedule-table td {
-  border: 1px solid #e0e0e0;
-  padding: 8px; 
-  text-align: center;
-  font-size: 11px; 
-  white-space: nowrap; 
-}
-
-/* Header Styles */
-.time-slot-header {
-  font-size: 12px;
-  padding: 8px 4px;
-}
-
-.time-slot-header.full-hour {
-  font-weight: bold;
-  border-left: 2px solid #bbb; /* Make full hour border more prominent */
-}
-
-.time-slot-header.half-hour {
-  border-left: 1px dotted #ccc; /* De-emphasize half-hour border */
-}
-
-
-.schedule-table th:first-child, .schedule-table td:first-child {
-  position: sticky;
-  left: 0;
-  background-color: #f8f9fa;
-  z-index: 10;
-  width: 120px; 
-  text-align: left;
-  font-weight: bold;
-}
-
-.schedule-table thead th {
-  position: sticky;
-  top: 0;
-  background-color: #f2f2f2;
-  z-index: 20;
-}
-
-/* Color Coding for Tasks */
-.task-cell {
-  color: #333;
-  font-weight: 500;
-  overflow: hidden; 
-  text-overflow: ellipsis;
-}
-.task-reservations { background-color: #bbdefb; }
-.task-dispatch { background-color: #c8e6c9; }
-.task-journeydesk { background-color: #fff9c4; }
-.task-network { background-color: #ffccbc; }
-.task-marketing { background-color: #d1c4e9; }
-.task-security { background-color: #cfd8dc; } 
-.task-sales { background-color: #b2ebf2; }
-.task-scheduling { background-color: #ffecb3; }
-.task-badgesprojects { background-color: #d7ccc8; }
-.task-lunch { background-color: #e0e0e0; }
-.task-pto { background-color: #ffcdd2; color: #b71c1c; }
-.task-meeting { background-color: #ffab91; color: #3e2723; } /* New style for meetings */
-
-
-/* Print-specific styles */
-@media print {
-  @page {
-    size: letter landscape;
-    margin: 0.5in;
-  }
-
-  body {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-
-  .app-container {
-    display: block;
-    height: auto;
-    overflow: visible;
-  }
-
-  .sidebar {
-    display: none;
-  }
-
-  .scheduler-panel {
-    overflow: visible;
-    padding: 0;
-  }
-
-  .day-schedule {
-    page-break-after: always;
-    margin-bottom: 20px;
-  }
-
-  .day-schedule:last-of-type {
-    page-break-after: avoid;
-  }
-
-  .schedule-table {
-    font-size: 9px;
-  }
-  .schedule-table th, .schedule-table td {
-    padding: 4px;
-  }
+.chatbot-input-area button {
+    white-space: nowrap;
+    padding: 8px 12px;
+    align-self: flex-end; /* Keep button aligned to bottom */
 }

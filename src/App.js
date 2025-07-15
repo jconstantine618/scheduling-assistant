@@ -1,159 +1,223 @@
 // src/App.js
-import React, { useRef, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import SchedulerApp from './SchedulerApp.js';
-import EmployeeEditor from './EmployeeEditor.js'; // Import the new editor
-import { INITIAL_EMPLOYEES } from './data/initialEmployees.js';
+import EmployeeEditor from './EmployeeEditor.js';
+import AdminPanel from './AdminPanel.js';
+import Chatbot from './Chatbot.js';
+import EventEditor from './EventEditor.js'; // <-- This line was missing
 import './App.css';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-
-// Convert the initial employees object into an array of objects
-const initialEmployeesArray = Object.entries(INITIAL_EMPLOYEES).map(([name, details]) => ({
-    name,
-    ...details,
-}));
-
 
 export default function App() {
-  const schedulerRef = useRef(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-
-  // --- NEW: Employee state management ---
-  const [employees, setEmployees] = useState(initialEmployeesArray);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [view, setView] = useState('scheduler');
+  const [employees, setEmployees] = useState({});
+  const [rules, setRules] = useState({});
+  const [scheduleEvents, setScheduleEvents] = useState([]);
+  const [weekStart, setWeekStart] = useState(getStartOfWeek(new Date()));
   const [editingEmployee, setEditingEmployee] = useState(null);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleEditEmployee = (employee) => {
-    setEditingEmployee(employee);
-    setIsModalOpen(true);
+  // Fetch initial data
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setIsLoading(true);
+        const [employeesRes, rulesRes] = await Promise.all([
+          fetch('/api/employees'),
+          fetch('/api/rules'),
+        ]);
+        if (!employeesRes.ok || !rulesRes.ok) throw new Error('Failed to fetch initial data.');
+        
+        const employeesData = await employeesRes.json();
+        const rulesData = await rulesRes.json();
+        
+        setEmployees(employeesData);
+        setRules(rulesData);
+      } catch (error) {
+        console.error("Failed to fetch data:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  function getStartOfWeek(date) {
+    const d = new Date(date);
+    d.setDate(d.getDate() - d.getDay());
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  // --- Event Handlers ---
+  const handleEventClick = (eventClickInfo) => {
+    if (eventClickInfo.event.backgroundColor === '#dc3545') {
+        alert("PTO and external meetings cannot be edited here. Please edit them directly in Google Calendar.");
+        return;
+    }
+    setEditingEvent(eventClickInfo.event);
+  };
+
+  const handleEventSave = (updatedEvent) => {
+    const updatedEvents = scheduleEvents.map(e => 
+        e.id === updatedEvent.id ? { ...e, ...updatedEvent, ...getTaskColor(updatedEvent.title) } : e
+    );
+    setScheduleEvents(updatedEvents);
+    setEditingEvent(null);
+  };
+
+  const handleEventDelete = (eventId) => {
+    if (window.confirm("Are you sure you want to delete this task?")) {
+        setScheduleEvents(scheduleEvents.filter(e => e.id !== eventId));
+        setEditingEvent(null);
+    }
+  };
+
+  // --- Employee and Rule Handlers ---
+  const handleSaveEmployee = async (employeeData) => {
+    setIsLoading(true);
+    const updatedEmployees = { ...employees };
+    const isNew = !Object.keys(employees).includes(employeeData.name);
+    if (isNew) updatedEmployees[employeeData.name] = employeeData;
+    else {
+      if (editingEmployee && editingEmployee.name !== employeeData.name) {
+        delete updatedEmployees[editingEmployee.name];
+      }
+      updatedEmployees[employeeData.name] = employeeData;
+    }
+    try {
+      await fetch('/api/employees', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedEmployees),
+      });
+      setEmployees(updatedEmployees);
+    } catch (error) {
+      console.error('Error saving employees:', error);
+    } finally {
+      setIsLoading(false);
+      setEditingEmployee(null);
+    }
+  };
+
+  const handleRemoveEmployee = async (employeeName) => {
+    if (!window.confirm(`Are you sure you want to remove ${employeeName}?`)) return;
+    setIsLoading(true);
+    const updatedEmployees = { ...employees };
+    delete updatedEmployees[employeeName];
+    try {
+      await fetch('/api/employees', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedEmployees),
+      });
+      setEmployees(updatedEmployees);
+    } catch (error) {
+      console.error('Error removing employee:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  const handleSaveRules = async (newRules) => {
+    try {
+      const response = await fetch('/api/rules', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRules),
+      });
+      if (!response.ok) throw new Error('Server failed to save rules.');
+      setRules(newRules);
+      alert('Scheduling rules have been updated!');
+    } catch (error) {
+      console.error('Error saving rules:', error);
+    }
   };
 
   const handleAddNewEmployee = () => {
-    setEditingEmployee({}); // Pass an empty object for a new employee
-    setIsModalOpen(true);
+    setEditingEmployee({
+      name: '', email: '', shift: { start: '09:00', end: '17:00' },
+      lunch: { start: '12:00', end: '13:00' }, hours: 40, abilities: [],
+      specialistTask: '', pto: [], specialistTarget: 0,
+    });
   };
   
-  const handleSaveEmployee = (employeeData) => {
-    setEmployees(prev => {
-        const existing = prev.find(e => e.name === employeeData.name);
-        if (existing) {
-            // Update existing employee
-            return prev.map(e => e.name === employeeData.name ? employeeData : e);
-        } else {
-            // Add new employee
-            return [...prev, employeeData];
-        }
-    });
-    setIsModalOpen(false);
-    setEditingEmployee(null);
-  };
-
-  const handleRemoveEmployee = (employeeName) => {
-      if (window.confirm(`Are you sure you want to remove ${employeeName}?`)) {
-          setEmployees(prev => prev.filter(e => e.name !== employeeName));
-      }
-  };
-
-
-  const [weekStart, setWeekStart] = useState(() => {
-    const today = new Date();
-    today.setDate(today.getDate() - today.getDay());
-    return today.toISOString().split('T')[0];
-  });
-
-  const clearOverrides = () => {
-    schedulerRef.current.clearOverrides();
-  };
-
-  const handleExportToPdf = async () => {
-    setIsExporting(true);
-    const schedulerPanel = document.querySelector('.scheduler-panel');
-    const daySchedules = schedulerPanel.querySelectorAll('.day-schedule');
-    
-    const pdf = new jsPDF('landscape', 'in', 'letter');
-    const page_width = 11;
-    const margin = 0.25;
-
-    for (let i = 0; i < daySchedules.length; i += 2) {
-      const chunk = [daySchedules[i]];
-      if (daySchedules[i+1]) chunk.push(daySchedules[i+1]);
-
-      const tempContainer = document.createElement('div');
-      tempContainer.style.position = 'absolute';
-      tempContainer.style.left = '-9999px';
-      chunk.forEach(el => tempContainer.appendChild(el.cloneNode(true)));
-      document.body.appendChild(tempContainer);
-
-      const canvas = await html2canvas(tempContainer, { scale: 2, useCORS: true, logging: false });
-      document.body.removeChild(tempContainer);
-      
-      const imgData = canvas.toDataURL('image/png');
-      const imgWidth = page_width - (margin * 2);
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      
-      if (i > 0) pdf.addPage();
-      pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight);
+  const getTaskColor = (task) => {
+    switch (task) {
+        case 'Reservations': return { backgroundColor: '#007bff', borderColor: '#007bff' };
+        case 'Dispatch': return { backgroundColor: '#28a745', borderColor: '#28a745' };
+        case 'Lunch': return { backgroundColor: '#ffc107', borderColor: '#ffc107' };
+        default: return { backgroundColor: '#6c757d', borderColor: '#6c757d' };
     }
-
-    pdf.save(`schedule-week-of-${weekStart}.pdf`);
-    setIsExporting(false);
-  };
+  }
 
   return (
-    <div className="app-container">
-      <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
-        <button className="collapse-btn" onClick={() => setSidebarCollapsed(c => !c)}>
-          {sidebarCollapsed ? '›' : '‹'}
-        </button>
-
-        {!sidebarCollapsed && (
-          <div className="controls">
-            <h2>Controls</h2>
-            <section>
-                <button onClick={handleExportToPdf} disabled={isExporting}>
-                    {isExporting ? 'Exporting...' : 'Export to PDF'}
-                </button>
-            </section>
-            <section>
-              <h3>Week Starting</h3>
-              <input type="date" value={weekStart} onChange={e => setWeekStart(e.target.value)} />
-            </section>
-            <section>
-              <h3>Add Override</h3>
-              <button onClick={clearOverrides} className="danger">Clear Overrides</button>
-            </section>
-            
-            <section className="employee-management">
-                <h3>Manage Employees</h3>
-                <ul className="employee-list">
-                    {employees.map(emp => (
-                        <li key={emp.name}>
-                            <span>{emp.name}</span>
-                            <div>
-                                <button className="edit-btn" onClick={() => handleEditEmployee(emp)}>Edit</button>
-                                <button className="remove-btn" onClick={() => handleRemoveEmployee(emp.name)}>Remove</button>
-                            </div>
-                        </li>
-                    ))}
-                </ul>
-                <button onClick={handleAddNewEmployee}>Add New Employee</button>
-            </section>
-
-          </div>
-        )}
-      </aside>
-
-      <main className="scheduler-panel">
-        <SchedulerApp
-          ref={schedulerRef}
-          initialEmployees={employees}
-          weekStart={weekStart}
+    <div className="App">
+      {isLoading && <div className="loading-overlay">Loading...</div>}
+      {editingEmployee && (
+        <EmployeeEditor
+          employee={editingEmployee}
+          onSave={handleSaveEmployee}
+          onClose={() => setEditingEmployee(null)}
         />
-      </main>
+      )}
+      {editingEvent && (
+          <EventEditor 
+            event={editingEvent}
+            employee={employees[editingEvent.getResources()[0].id]}
+            onClose={() => setEditingEvent(null)}
+            onSave={handleEventSave}
+            onDelete={handleEventDelete}
+          />
+      )}
 
-      {isModalOpen && <EmployeeEditor employee={editingEmployee} onSave={handleSaveEmployee} onClose={() => setIsModalOpen(false)} />}
+      <div className="controls">
+        <h2>Controls</h2>
+        <div className="view-switcher">
+            <button onClick={() => setView('scheduler')} className={view === 'scheduler' ? 'active' : ''}>Scheduler</button>
+            <button onClick={() => setView('admin')} className={view === 'admin' ? 'active' : ''}>Admin</button>
+        </div>
+        
+        {view === 'scheduler' && (
+            <div className="scheduler-controls">
+                <div className="navigation">
+                    <button onClick={() => setWeekStart(d => new Date(new Date(d).setDate(d.getDate() - 7)))}>&lt;</button>
+                    <button onClick={() => setWeekStart(getStartOfWeek(new Date()))}>Today</button>
+                    <button onClick={() => setWeekStart(d => new Date(new Date(d).setDate(d.getDate() + 7)))}>&gt;</button>
+                </div>
+                <label>
+                Week Starting:
+                <input type="date" value={weekStart.toISOString().split('T')[0]}
+                    onChange={(e) => setWeekStart(getStartOfWeek(new Date(e.target.value)))}
+                />
+                </label>
+            </div>
+        )}
+
+        <div className="chatbot-wrapper">
+          <Chatbot 
+              employees={employees}
+              rules={rules}
+              scheduleEvents={scheduleEvents}
+          />
+        </div>
+      </div>
+      <div className="main-content">
+        {view === 'scheduler' ? (
+          <SchedulerApp
+            employees={employees} rules={rules}
+            weekStart={weekStart.toISOString()}
+            events={scheduleEvents}
+            onEventsGenerated={setScheduleEvents}
+            onEventClick={handleEventClick}
+          />
+        ) : (
+          <AdminPanel
+            employees={employees} rules={rules}
+            onSaveRules={handleSaveRules}
+            onEditEmployee={(name) => setEditingEmployee({ name, ...employees[name] })}
+            onRemoveEmployee={handleRemoveEmployee}
+            onAddNewEmployee={handleAddNewEmployee}
+          />
+        )}
+      </div>
     </div>
   );
 }
-
